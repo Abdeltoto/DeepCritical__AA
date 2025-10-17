@@ -197,261 +197,697 @@ class TestPlannerAgent:
         assert_valid_plan(plan, "test fallback")
 
 
-# # ExecutorAgent Tests
-# class TestExecutorAgent:
-#     """Test ExecutorAgent functionality."""
-
-#     def test_executor_initialization_default(self):
-#         """Test ExecutorAgent initialization with defaults."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = ExecutorAgent()
-
-#             assert agent.agent_type == AgentType.EXECUTOR
-#             assert agent.retries == 2
-
-#     def test_executor_initialization_custom_retries(self):
-#         """Test ExecutorAgent with custom retries."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = ExecutorAgent(retries=5)
-
-#             assert agent.retries == 5
-
-#     @pytest.mark.asyncio
-#     async def test_execute_plan_success(self, execution_history):
-#         """Test successful plan execution."""
-#         with patch("DeepResearch.agents.Agent"):
-#             with patch("DeepResearch.agents.registry") as mock_registry:
-#                 agent = ExecutorAgent()
-
-#                 # Mock tool runner
-#                 mock_runner = Mock()
-#                 mock_runner.run.return_value = Mock(
-#                     success=True, data={"result": "test_output"}
-#                 )
-#                 mock_registry.make.return_value = mock_runner
-
-#                 plan = [{"tool": "test_tool", "params": {"query": "test"}}]
-
-#                 result = await agent.execute_plan(plan, execution_history)
-
-#                 assert "test_tool.result" in result
-#                 assert result["test_tool.result"] == "test_output"
-#                 assert_valid_plan(plan, "test")
-
-#     @pytest.mark.asyncio
-#     async def test_execute_plan_with_variable_substitution(
-#         self, execution_history
-#     ):
-#         """Test plan execution with variable substitution."""
-#         with patch("DeepResearch.agents.Agent"):
-#             with patch("DeepResearch.agents.registry") as mock_registry:
-#                 agent = ExecutorAgent()
-
-#                 # Mock tool runner
-#                 mock_runner = Mock()
-#                 mock_runner.run.return_value = Mock(
-#                     success=True, data={"queries": ["q1", "q2"]}
-#                 )
-#                 mock_registry.make.return_value = mock_runner
-
-#                 plan = [
-#                     {"tool": "rewrite", "params": {"query": "test"}},
-#                     {"tool": "search", "params": {"query": "${rewrite.queries}"}},
-#                 ]
-
-#                 result = await agent.execute_plan(plan, execution_history)
-
-#                 assert "rewrite.queries" in result
-#                 assert "search.queries" in result or "queries" in result
-
-#     @pytest.mark.asyncio
-#     async def test_execute_plan_with_retry(self, execution_history):
-#         """Test plan execution with retry logic."""
-#         with patch("DeepResearch.agents.Agent"):
-#             with patch("DeepResearch.agents.registry") as mock_registry:
-#                 agent = ExecutorAgent(retries=2)
-
-#                 # Mock tool that fails then succeeds
-#                 mock_runner = Mock()
-#                 mock_runner.run.side_effect = [
-#                     Mock(success=False, error="First attempt failed"),
-#                     Mock(success=True, data={"result": "success"}),
-#                 ]
-#                 mock_registry.make.return_value = mock_runner
+# ExecutorAgent Tests
+class TestExecutorAgent:
+    """Test ExecutorAgent functionality."""
+
+    def test_executor_initialization_default(self):
+        """Test ExecutorAgent initialization with defaults."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = ExecutorAgent()
+
+            assert agent.agent_type == AgentType.EXECUTOR
+            assert agent.retries == 2
+
+    def test_executor_initialization_custom_retries(self):
+        """Test ExecutorAgent with custom retries."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = ExecutorAgent(retries=5)
+
+            assert agent.retries == 5
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_success(self, execution_history):
+        """Test successful plan execution."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent()
+
+                # Mock tool runner
+                mock_runner = Mock()
+                mock_runner.run.return_value = Mock(
+                    success=True, data={"result": "test_output"}
+                )
+                mock_registry.make.return_value = mock_runner
+
+                plan = [{"tool": "test_tool", "params": {"query": "test"}}]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                assert "test_tool.result" in result
+                assert result["test_tool.result"] == "test_output"
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_with_placeholders(self, execution_history):
+        """Test parameter materialization with placeholders across multiple steps."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent()
+
+                # Mock two tool runners: search and summarize
+                mock_search_runner = Mock()
+                mock_search_runner.run.return_value = Mock(
+                    success=True, data={"results": "retrieved_data"}
+                )
+
+                mock_summarize_runner = Mock()
+                mock_summarize_runner.run.return_value = Mock(
+                    success=True, data={"summary": "final_summary"}
+                )
+
+                # Configure registry to return correct runner per tool name
+                def make_tool(tool_name):
+                    if tool_name == "search":
+                        return mock_search_runner
+                    if tool_name == "summarize":
+                        return mock_summarize_runner
+                    raise ValueError(f"Unexpected tool: {tool_name}")
+
+                mock_registry.make.side_effect = make_tool
+
+                # Plan with placeholder: summarize uses output from search
+                plan = [
+                    {"tool": "search", "params": {"query": "test query"}},
+                    {"tool": "summarize", "params": {"content": "${search.results}"}},
+                ]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                # Verify search was called with static param
+                mock_search_runner.run.assert_called_once_with({"query": "test query"})
+
+                # Verify summarize was called with MATERIALIZED param (not placeholder)
+                mock_summarize_runner.run.assert_called_once_with(
+                    {"content": "retrieved_data"}
+                )
+
+                # Verify bag contains scoped and flat keys
+                assert "search.results" in result
+                assert result["search.results"] == "retrieved_data"
+                assert "results" in result  # flat alias
+                assert result["results"] == "retrieved_data"
+
+                assert "summarize.summary" in result
+                assert result["summarize.summary"] == "final_summary"
+                assert "summary" in result  # flat alias
+                assert result["summary"] == "final_summary"
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_retries_on_failure(self, execution_history):
+        """Test that execute_plan retries a tool if it fails on first attempt."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent(retries=1)  # Allow 1 retry (2 total attempts max)
+
+                # Mock a tool that fails on first call, succeeds on second
+                mock_runner = Mock()
+                mock_runner.run.side_effect = [
+                    Mock(success=False, error="Network timeout"),  # First attempt: fail
+                    Mock(
+                        success=True, data={"result": "retried_success"}
+                    ),  # Second: succeed
+                ]
+                mock_registry.make.return_value = mock_runner
+
+                plan = [{"tool": "flaky_tool", "params": {"query": "retry_test"}}]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                # Verify the tool was called twice (due to retry)
+                assert mock_runner.run.call_count == 2
+
+                # Verify final bag contains the successful result
+                assert "flaky_tool.result" in result
+                assert result["flaky_tool.result"] == "retried_success"
+
+                # Verify both attempts were recorded in history
+                assert len(execution_history.items) == 2
+
+                # Inspect the recorded attempts
+                first_attempt = execution_history.items[0]
+                second_attempt = execution_history.items[1]
+
+                assert first_attempt["success"] is False
+                assert first_attempt["error"] == "Network timeout"
+                assert first_attempt["tool"] == "flaky_tool"
+                assert first_attempt["params"] == {"query": "retry_test"}
+
+                assert second_attempt["success"] is True
+                assert second_attempt["tool"] == "flaky_tool"
+                assert second_attempt["params"] == {"query": "retry_test"}
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_fails_after_retries(self, execution_history):
+        """Test that execute_plan stops execution if a tool fails after all retries."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent(
+                    retries=2
+                )  # Allow 2 retries (3 total attempts max)
+
+                # Mock runners
+                mock_first_runner = Mock()
+                mock_first_runner.run.return_value = Mock(
+                    success=True, data={"preliminary": "data_from_first"}
+                )
+
+                mock_failing_runner = Mock()
+                # Fail on all 3 attempts (1 initial + 2 retries)
+                mock_failing_runner.run.return_value = Mock(
+                    success=False, error="Always fails"
+                )
+
+                mock_final_runner = Mock()  # Should NOT be called
+                mock_final_runner.run.return_value = Mock(
+                    success=True, data={"final": "should_not_happen"}
+                )
+
+                def make_tool(tool_name):
+                    if tool_name == "first_tool":
+                        return mock_first_runner
+                    if tool_name == "failing_tool":
+                        return mock_failing_runner
+                    if tool_name == "final_tool":
+                        return mock_final_runner
+                    raise ValueError(f"Unexpected tool: {tool_name}")
+
+                mock_registry.make.side_effect = make_tool
+
+                # Plan: first_tool → failing_tool → final_tool
+                plan = [
+                    {"tool": "first_tool", "params": {}},
+                    {"tool": "failing_tool", "params": {}},
+                    {"tool": "final_tool", "params": {}},  # Should not execute
+                ]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                # Verify first tool was called once
+                mock_first_runner.run.assert_called_once_with({})
+
+                # Verify failing tool was called 3 times (1 initial + 2 retries)
+                assert mock_failing_runner.run.call_count == 3
+
+                # Verify final tool was NEVER called
+                mock_final_runner.run.assert_not_called()
+
+                # Verify bag contains data from first step only (partial result)
+                assert "first_tool.preliminary" in result
+                assert result["first_tool.preliminary"] == "data_from_first"
+                # Ensure final_tool data is NOT in result
+                assert "final_tool.final" not in result
+
+    def test_run_plan_sync_wrapper(self, execution_history):
+        """Test that run_plan correctly wraps execute_plan."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent()
+
+                # Mock a tool that returns known data
+                mock_runner = Mock()
+                mock_runner.run.return_value = Mock(
+                    success=True, data={"sync_result": "from_sync_wrapper"}
+                )
+                mock_registry.make.return_value = mock_runner
+
+                plan = [{"tool": "sync_test_tool", "params": {"query": "sync_test"}}]
+
+                # Call the synchronous method
+                result = agent.run_plan(plan, execution_history)
+
+                # Verify the tool was called (via execute_plan)
+                mock_runner.run.assert_called_once_with({"query": "sync_test"})
+
+                # Verify the result is returned correctly
+                assert "sync_test_tool.sync_result" in result
+                assert result["sync_test_tool.sync_result"] == "from_sync_wrapper"
+
+                # Ensure it behaves the same as execute_plan
+                # (We could optionally call execute_plan directly and compare results)
+
+    def test_adaptive_parameter_adjustment(self):
+        """Test that _adjust_parameters provides fallback values for empty parameters."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = ExecutorAgent()
+
+            # Simulate an initial parameter set with empty/missing values
+            initial_params = {
+                "query": "",  # Empty query should get fallback
+                "snippets": "",  # Empty snippets should get fallback from bag
+                "other_param": "already_set",  # Should remain unchanged
+            }
+
+            # Simulate a bag with fallback data for snippets
+            bag = {"search.snippets": "fallback_snippets_from_bag"}
+
+            # Call the internal adjustment method
+            adjusted = agent._adjust_parameters(initial_params, bag)
+
+            # Verify adjustments were made
+            assert adjusted["query"] == "general information", (
+                "Empty query should default to 'general information'"
+            )
+
+            assert adjusted["snippets"] == "fallback_snippets_from_bag", (
+                "Empty snippets should default to value from bag['search.snippets']"
+            )
+
+            # Verify unchanged params
+            assert adjusted["other_param"] == "already_set", (
+                "Non-empty params should remain unchanged"
+            )
+
+            # Ensure original dict was not mutated
+            assert initial_params["query"] == "", (
+                "Original params should not be modified"
+            )
+
+    # Just to make sure that _adjust_parameters is actually
+    # called during execution, I am patching it:
+    @pytest.mark.asyncio
+    async def test_adjust_parameters_called_on_retry(self, execution_history):
+        """Test that _adjust_parameters is invoked during retries."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent(retries=1)
+
+                # Mock a tool that fails once, then succeeds
+                mock_runner = Mock()
+                mock_runner.run.side_effect = [
+                    Mock(success=False, error="Bad query"),
+                    Mock(success=True, data={"result": "adjusted_success"}),
+                ]
+                mock_registry.make.return_value = mock_runner
+
+                # Patch the adjustment method to verify it's called
+                with patch.object(agent, "_adjust_parameters") as mock_adjust:
+                    mock_adjust.return_value = {"query": "adjusted_query"}
+
+                    plan = [{"tool": "adjust_test", "params": {"query": "bad_query"}}]
+                    _ = await agent.execute_plan(plan, execution_history)
+
+                    # Verify adjustment was called once
+                    mock_adjust.assert_called_once()
+
+                    # Check that the first call was with the expected params and an (initially empty) bag
+                    # The bag might contain data from previous attempts or initial state
+                    args, _ = mock_adjust.call_args
+                    called_params, _ = args
+                    assert called_params == {"query": "bad_query"}
+                    # Bag might be non-empty due to execution context — just verify params part
+                    assert "query" in called_params
+
+    def test_materialize_params(self):
+        """Test parameter materialization."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = ExecutorAgent()
+
+            bag = {"rewrite.queries": ["q1", "q2"], "search.results": ["r1"]}
+            params = {"query": "${rewrite.queries}", "type": "web"}
+
+            result = agent._materialize_params(params, bag)
+
+            assert result["query"] == ["q1", "q2"]
+            assert result["type"] == "web"
+
+    def test_materialize_params_missing_key(self):
+        """Test parameter materialization with missing key."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = ExecutorAgent()
+
+            bag = {}
+            params = {"query": "${missing.key}"}
+
+            result = agent._materialize_params(params, bag)
+
+            assert result["query"] == ""
+
+    def test_adjust_parameters(self):
+        """Test parameter adjustment for retries."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = ExecutorAgent()
+
+            bag = {"search.snippets": "test data"}
+            params = {"query": "", "snippets": ""}
+
+            adjusted = agent._adjust_parameters(params, bag)
+
+            assert adjusted["query"] == "general information"
+            assert adjusted["snippets"] == "test data"
+
+    @pytest.mark.asyncio
+    async def test_bag_flat_aliasing(self, execution_history):
+        """Test that execute_plan populates bag with both scoped and flat keys."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent()
+
+                # Mock a tool that returns multiple data keys
+                mock_runner = Mock()
+                mock_runner.run.return_value = Mock(
+                    success=True,
+                    data={
+                        "summary": "brief_summary",
+                        "confidence": 0.95,
+                        "metadata": {"source": "web"},
+                    },
+                )
+                mock_registry.make.return_value = mock_runner
+
+                plan = [{"tool": "test_alias_tool", "params": {"query": "alias_test"}}]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                # Verify scoped keys exist
+                assert "test_alias_tool.summary" in result
+                assert result["test_alias_tool.summary"] == "brief_summary"
+
+                assert "test_alias_tool.confidence" in result
+                assert result["test_alias_tool.confidence"] == 0.95
+
+                assert "test_alias_tool.metadata" in result
+                assert result["test_alias_tool.metadata"] == {"source": "web"}
+
+                # Verify flat aliases also exist
+                assert "summary" in result
+                assert result["summary"] == "brief_summary"
+
+                assert "confidence" in result
+                assert result["confidence"] == 0.95
+
+                assert "metadata" in result
+                assert result["metadata"] == {"source": "web"}
+
+    @pytest.mark.asyncio
+    async def test_bag_flat_alias_collision(self, execution_history):
+        """Test that flat aliases can overwrite each other, but scoped keys remain distinct."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent()
+
+                mock_first_runner = Mock()
+                mock_first_runner.run.return_value = Mock(
+                    success=True, data={"common_key": "from_first"}
+                )
+
+                mock_second_runner = Mock()
+                mock_second_runner.run.return_value = Mock(
+                    success=True, data={"common_key": "from_second"}
+                )
+
+                def make_tool(tool_name):
+                    if tool_name == "first_tool":
+                        return mock_first_runner
+                    if tool_name == "second_tool":
+                        return mock_second_runner
+                    raise ValueError(f"Unexpected tool: {tool_name}")
+
+                mock_registry.make.side_effect = make_tool
+
+                plan = [
+                    {"tool": "first_tool", "params": {}},
+                    {"tool": "second_tool", "params": {}},
+                ]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                # Scoped keys remain distinct
+                assert result["first_tool.common_key"] == "from_first"
+                assert result["second_tool.common_key"] == "from_second"
+
+                # Flat alias overwrites previous value
+                assert result["common_key"] == "from_second"  # from second tool
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_halts_on_tool_failure(self, execution_history):
+        """Test that execute_plan stops execution when a tool fails after all retries."""
+        with patch("DeepResearch.agents.Agent"):
+            with patch("DeepResearch.agents.registry") as mock_registry:
+                agent = ExecutorAgent(retries=0)  # No retries — fail immediately
+
+                # Mock runners:
+                # 1. first_tool: succeeds → adds data to bag
+                mock_first_runner = Mock()
+                mock_first_runner.run.return_value = Mock(
+                    success=True, data={"first_result": "data_from_first"}
+                )
+
+                # 2. failing_tool: fails after retries → should halt execution
+                mock_failing_runner = Mock()
+                mock_failing_runner.run.return_value = Mock(
+                    success=False, error="Critical failure"
+                )
+
+                # 3. subsequent_tool: should NOT be called due to halt
+                mock_subsequent_runner = Mock()
+                mock_subsequent_runner.run.return_value = Mock(
+                    success=True, data={"never_reached": "should_not_happen"}
+                )
+
+                def make_tool(tool_name):
+                    if tool_name == "first_tool":
+                        return mock_first_runner
+                    if tool_name == "failing_tool":
+                        return mock_failing_runner
+                    if tool_name == "subsequent_tool":
+                        return mock_subsequent_runner
+                    raise ValueError(f"Unexpected tool: {tool_name}")
+
+                mock_registry.make.side_effect = make_tool
+
+                # Plan: first_tool → failing_tool → subsequent_tool
+                plan = [
+                    {"tool": "first_tool", "params": {"query": "step1"}},
+                    {"tool": "failing_tool", "params": {"query": "step2"}},
+                    {
+                        "tool": "subsequent_tool",
+                        "params": {"query": "step3"},
+                    },  # Should not execute
+                ]
+
+                result = await agent.execute_plan(plan, execution_history)
+
+                # Verify first_tool was called
+                mock_first_runner.run.assert_called_once_with({"query": "step1"})
+
+                # Verify failing_tool was called (and failed)
+                mock_failing_runner.run.assert_called_once_with({"query": "step2"})
+
+                # Verify subsequent_tool was NEVER called (execution halted)
+                mock_subsequent_runner.run.assert_not_called()
+
+                # Verify bag contains data from first_tool only (partial result)
+                assert "first_tool.first_result" in result
+                assert result["first_tool.first_result"] == "data_from_first"
+                assert "first_result" in result  # flat alias
+                assert result["first_result"] == "data_from_first"
+
+                # Verify bag does NOT contain data from subsequent_tool
+                assert "subsequent_tool.never_reached" not in result
+                assert "never_reached" not in result
+
+                # Verify history contains entries for first_tool (success) and failing_tool (failure)
+                assert len(execution_history.items) == 2
+                assert execution_history.items[0]["tool"] == "first_tool"
+                assert execution_history.items[0]["success"] is True
+                assert execution_history.items[1]["tool"] == "failing_tool"
+                assert execution_history.items[1]["success"] is False
+
+
+# SearchAgent Tests
+class TestSearchAgent:
+    """Test SearchAgent functionality."""
+
+    def test_search_agent_initialization(self):
+        """Test SearchAgent initialization."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = SearchAgent()
+
+            assert agent.agent_type == AgentType.SEARCH
+            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+
+    def test_search_agent_custom_model(self):
+        """Test SearchAgent with custom model."""
+        with patch("DeepResearch.agents.Agent"):  # Patch BaseAgent.__init__
+            agent = SearchAgent(model_name="openai:gpt-4")
+
+            assert agent.agent_type == AgentType.SEARCH
+            assert agent.model_name == "openai:gpt-4"
+
+    @pytest.mark.asyncio
+    async def test_search_method_success(self):
+        """Test successful search execution."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = SearchAgent()
+
+            # Mock the execute method to return a successful result
+            mock_result = Mock()
+            mock_result.success = True
+            mock_result.data = {
+                "results": [
+                    {
+                        "title": "Test Result",
+                        "url": "http://example.com",
+                        "snippet": "Test snippet",
+                    }
+                ]
+            }
+
+            # Create the async mock and patch it
+            mock_execute = AsyncMock(return_value=mock_result)
+
+            with patch.object(BaseAgent, "execute", mock_execute):
+                result = await agent.search(
+                    "test query", search_type="search", num_results=5
+                )
+
+            # Verify the execute method was called with correct parameters
+            mock_execute.assert_called_once_with(
+                {"query": "test query", "search_type": "search", "num_results": 5}
+            )
+
+            # Verify the result is returned correctly
+            assert result == mock_result.data
+
+    @pytest.mark.asyncio
+    async def test_search_method_default_parameters(self):
+        """Test search uses default parameters when not specified."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = SearchAgent()
+
+            mock_result = Mock()
+            mock_result.success = True
+            mock_result.data = {"results": []}
+            # Create the async mock and patch it
+            mock_execute = AsyncMock(return_value=mock_result)
+
+            with patch.object(BaseAgent, "execute", mock_execute):
+                result = await agent.search("test query")
+
+            # Verify execute was called with default values
+            mock_execute.assert_called_once_with(
+                {
+                    "query": "test query",
+                    "search_type": "search",  # Default
+                    "num_results": 10,  # Default
+                }
+            )
+
+            assert result == {"results": []}
+
+    @pytest.mark.asyncio
+    async def test_search_method_failure(self):
+        """Test search returns error when execution fails."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = SearchAgent()
+
+            # Mock the execute method to return a failed result
+            mock_result = Mock()
+            mock_result.success = False
+            mock_result.error = "Search failed due to network timeout"
+
+            # Create the async mock and patch it
+            mock_execute = AsyncMock(return_value=mock_result)
+
+            with patch.object(BaseAgent, "execute", mock_execute):
+                result = await agent.search("test query")
+
+            # Verify the execute method was called with correct default parameters
+            mock_execute.assert_called_once_with(
+                {
+                    "query": "test query",
+                    "search_type": "search",  # Default value
+                    "num_results": 10,  # Default value
+                }
+            )
+
+            # Verify the result contains the error (as per search() implementation)
+            assert result == {"error": "Search failed due to network timeout"}
+
+    def test_tool_registration_success(self):
+        """Test that search tools are registered successfully when available."""
+        # Mock the Pydantic AI Agent instance
+        mock_agent_instance = Mock()
+
+        with patch(
+            "DeepResearch.src.tools.websearch_tools.WebSearchTool"
+        ) as mock_web_search_tool_cls:
+            with patch(
+                "DeepResearch.src.tools.websearch_tools.ChunkedSearchTool"
+            ) as mock_chunked_search_tool_cls:
+                # Create mock instances for the tools
+                mock_web_tool_instance = Mock()
+                mock_chunked_tool_instance = Mock()
+
+                # Configure the tool classes to return our mock instances when instantiated
+                mock_web_search_tool_cls.return_value = mock_web_tool_instance
+                mock_chunked_search_tool_cls.return_value = mock_chunked_tool_instance
+
+                # Create a SearchAgent instance with a mocked _agent
+                with patch("DeepResearch.agents.Agent"):
+                    agent = SearchAgent()
+
+                # Manually set the _agent to our mock
+                agent._agent = mock_agent_instance
+
+                # Call _register_tools directly
+                agent._register_tools()
+
+                # Cannot verify that both tool classes were instantiated exactly once
+                # as agent._register_tools() instantiates them once more.
+                # mock_web_search_tool_cls.assert_called_once()
+                # mock_chunked_search_tool_cls.assert_called_once()
+
+                # Verify that the run methods of both tool instances were registered with the agent
+                mock_agent_instance.tool.assert_any_call(mock_web_tool_instance.run)
+                mock_agent_instance.tool.assert_any_call(mock_chunked_tool_instance.run)
+
+                # Verify that exactly 2 tools were registered (no more, no less)
+                assert mock_agent_instance.tool.call_count == 2
+
+    def test_tool_registration_failure_graceful(self):
+        """Test that SearchAgent handles tool import failures gracefully."""
+        with patch("DeepResearch.agents.Agent"):
+            # Mock the _agent's tool method to track if it gets called
+            with patch(
+                "DeepResearch.agents.Agent._agent", create=True
+            ) as mock_agent_instance:
+                # Configure the mock agent to have a tool method that we can track
+                mock_tool_method = Mock()
+                mock_agent_instance.tool = mock_tool_method
+
+                # Patch the tool imports to fail
+                with patch(
+                    "DeepResearch.src.tools.websearch_tools.WebSearchTool",
+                    side_effect=ImportError("WebSearchTool not available"),
+                ):
+                    with patch(
+                        "DeepResearch.src.tools.websearch_tools.ChunkedSearchTool",
+                        side_effect=ImportError("ChunkedSearchTool not available"),
+                    ):
+                        # This should not raise an exception - the import failure should be caught silently
+                        agent = SearchAgent()
+
+                        # Verify the agent was created successfully despite the import failure
+                        assert agent.agent_type == AgentType.SEARCH
+                        assert agent.model_name == "anthropic:claude-sonnet-4-0"
+
+                        # Verify that the tool method was never called (since imports failed)
+                        mock_tool_method.assert_not_called()
+
+
+# RAGAgent Tests
+class TestRAGAgent:
+    """Test RAGAgent functionality."""
+
+    def test_rag_agent_initialization(self):
+        """Test RAGAgent initialization."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = RAGAgent()
+
+            assert agent.agent_type == AgentType.RAG
+            assert agent.model_name == "anthropic:claude-sonnet-4-0"
 
-#                 plan = [{"tool": "test_tool", "params": {"query": "test"}}]
-
-#                 result = await agent.execute_plan(plan, execution_history)
-
-#                 # Should succeed after retry
-#                 assert "test_tool.result" in result or "result" in result
-
-#     @pytest.mark.asyncio
-#     async def test_execute_plan_stops_on_failure(self, execution_history):
-#         """Test plan execution stops after max retries."""
-#         with patch("DeepResearch.agents.Agent"):
-#             with patch("DeepResearch.agents.registry") as mock_registry:
-#                 agent = ExecutorAgent(retries=1)
-
-#                 # Mock tool that always fails
-#                 mock_runner = Mock()
-#                 mock_runner.run.return_value = Mock(
-#                     success=False, error="Always fails"
-#                 )
-#                 mock_registry.make.return_value = mock_runner
-
-#                 plan = [
-#                     {"tool": "failing_tool", "params": {}},
-#                     {"tool": "never_reached", "params": {}},
-#                 ]
-
-#                 result = await agent.execute_plan(plan, execution_history)
-
-#                 # Should stop after first tool fails
-#                 assert "never_reached" not in str(result)
-
-#     def test_materialize_params(self):
-#         """Test parameter materialization."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = ExecutorAgent()
-
-#             bag = {"rewrite.queries": ["q1", "q2"], "search.results": ["r1"]}
-#             params = {"query": "${rewrite.queries}", "type": "web"}
-
-#             result = agent._materialize_params(params, bag)
-
-#             assert result["query"] == ["q1", "q2"]
-#             assert result["type"] == "web"
-
-#     def test_materialize_params_missing_key(self):
-#         """Test parameter materialization with missing key."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = ExecutorAgent()
-
-#             bag = {}
-#             params = {"query": "${missing.key}"}
-
-#             result = agent._materialize_params(params, bag)
-
-#             assert result["query"] == ""
-
-#     def test_adjust_parameters(self):
-#         """Test parameter adjustment for retries."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = ExecutorAgent()
-
-#             bag = {"search.snippets": "test data"}
-#             params = {"query": "", "snippets": ""}
-
-#             adjusted = agent._adjust_parameters(params, bag)
-
-#             assert adjusted["query"] == "general information"
-#             assert adjusted["snippets"] == "test data"
-
-#     def test_run_plan_sync(self, execution_history):
-#         """Test synchronous run_plan method."""
-#         with patch("DeepResearch.agents.Agent"):
-#             with patch("DeepResearch.agents.registry") as mock_registry:
-#                 agent = ExecutorAgent()
-
-#                 mock_runner = Mock()
-#                 mock_runner.run.return_value = Mock(
-#                     success=True, data={"result": "test"}
-#                 )
-#                 mock_registry.make.return_value = mock_runner
-
-#                 plan = [{"tool": "test", "params": {}}]
-
-#                 result = agent.run_plan(plan, execution_history)
-
-#                 assert isinstance(result, dict)
-
-
-# # SearchAgent Tests
-# class TestSearchAgent:
-#     """Test SearchAgent functionality."""
-
-#     def test_search_agent_initialization(self):
-#         """Test SearchAgent initialization."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = SearchAgent()
-
-#             assert agent.agent_type == AgentType.SEARCH
-
-#     @pytest.mark.asyncio
-#     async def test_search_success(self, mock_pydantic_agent):
-#         """Test successful search operation."""
-#         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-#             agent = SearchAgent()
-
-#             mock_result = Mock()
-#             mock_result.data = {
-#                 "results": [
-#                     {"title": "Result 1", "url": "http://test1.com"},
-#                     {"title": "Result 2", "url": "http://test2.com"},
-#                 ]
-#             }
-#             mock_pydantic_agent.run.return_value = mock_result
-
-#             result = await agent.search("test query")
-
-#             assert "results" in result
-#             assert len(result["results"]) == 2
-
-#     @pytest.mark.asyncio
-#     async def test_search_with_params(self, mock_pydantic_agent):
-#         """Test search with custom parameters."""
-#         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-#             agent = SearchAgent()
-
-#             mock_result = Mock()
-#             mock_result.data = {"results": []}
-#             mock_pydantic_agent.run.return_value = mock_result
-
-#             result = await agent.search(
-#                 "query", search_type="news", num_results=20
-#             )
-
-#             # Verify execution was called
-#             mock_pydantic_agent.run.assert_called_once()
-
-#     @pytest.mark.asyncio
-#     async def test_search_failure(self, mock_pydantic_agent):
-#         """Test search failure handling."""
-#         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-#             agent = SearchAgent()
-
-#             mock_pydantic_agent.run.side_effect = Exception("Search failed")
-
-#             result = await agent.search("test query")
-
-#             assert "error" in result
-
-#     def test_search_tool_registration(self):
-#         """Test that search tools are registered."""
-#         with patch("DeepResearch.agents.Agent") as mock_agent_class:
-#             with patch("DeepResearch.agents.WebSearchTool"):
-#                 with patch("DeepResearch.agents.ChunkedSearchTool"):
-#                     mock_agent = Mock()
-#                     mock_agent.tool = Mock()
-#                     mock_agent_class.return_value = mock_agent
-
-#                     agent = SearchAgent()
-
-#                     # Tools should be registered
-#                     assert mock_agent.tool.called
-
-
-# # RAGAgent Tests
-# class TestRAGAgent:
-#     """Test RAGAgent functionality."""
-
-#     def test_rag_agent_initialization(self):
-#         """Test RAGAgent initialization."""
-#         with patch("DeepResearch.agents.Agent"):
-#             agent = RAGAgent()
-
-#             assert agent.agent_type == AgentType.RAG
 
 #     @pytest.mark.asyncio
 #     async def test_rag_query_success(self, mock_pydantic_agent):
