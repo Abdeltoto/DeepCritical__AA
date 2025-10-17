@@ -338,10 +338,15 @@ class PlannerAgent(BaseAgent):
         ]
 
     def plan(self, parsed: dict[str, Any]) -> list[dict[str, Any]]:
-        """Legacy synchronous plan method."""
-        result = self.execute_sync(parsed)
-        if result.success and "steps" in result.data:
-            return result.data["steps"]
+        """Legacy synchronous plan method updated with exception handling."""
+        try:
+            result = self.execute_sync(parsed)
+            if result.success and "steps" in result.data:
+                return result.data["steps"]
+        except Exception:
+            # Optionally log:
+            # logger.warning("Synchronous planning failed, using default plan")
+            pass
         return self._get_default_plan(parsed.get("query", ""))
 
 
