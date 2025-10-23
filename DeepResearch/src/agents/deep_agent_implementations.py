@@ -137,7 +137,8 @@ class BaseDeepAgent:
 
         for tool_name in self.config.tools:
             if tool_name in tool_map:
-                self.agent.add_tool(tool_map[tool_name])
+                if hasattr(self.agent, "add_tool"):
+                    self.agent.add_tool(tool_map[tool_name])
 
     def _initialize_middleware(self) -> None:
         """Initialize middleware pipeline."""

@@ -105,7 +105,8 @@ class BaseAgent(ABC):
             # Register tools
             self._register_tools()
 
-        except Exception:
+        except Exception as e:
+            print(f"Failed to initialize agent: {e}")
             self._agent = None
 
     def _get_default_system_prompt(self) -> str:

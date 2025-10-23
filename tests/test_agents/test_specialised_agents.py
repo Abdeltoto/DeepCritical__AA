@@ -15,6 +15,11 @@ import pytest
 from DeepResearch.agents import (
     BaseAgent,
     BioinformaticsAgent,
+    DeepAgentFilesystemAgent,
+    DeepAgentGeneralAgent,
+    DeepAgentOrchestrationAgent,
+    DeepAgentPlanningAgent,
+    DeepAgentResearchAgent,
     DeepSearchAgent,
     EvaluatorAgent,
     ExecutorAgent,
@@ -22,6 +27,11 @@ from DeepResearch.agents import (
     PlannerAgent,
     RAGAgent,
     SearchAgent,
+    create_agent,
+)
+from DeepResearch.src.agents.deep_agent_implementations import (
+    AgentExecutionResult,
+    PlanningAgent,
 )
 from DeepResearch.src.datatypes.agents import (
     AgentDependencies,
@@ -1044,15 +1054,16 @@ class TestRAGAgent:
             with patch(
                 "DeepResearch.src.tools.integrated_search_tools.RAGSearchTool"
             ) as _:
-                agent = RAGAgent("openai:gpt-4o")
-                agent._initialize_agent(system_prompt="Test", instructions="Test")
-                # Register RAG tools
-                agent._register_tools()
-                assert MockIntegrated.called
-                # assert MockRAG.called
-                # Not sure why RAGSearch tool is not registered
-                # Need to double-check with @Tonic
-                assert hasattr(agent._agent, "tool")
+                with patch("DeepResearch.agents.Agent"):
+                    agent = RAGAgent()
+                    agent._initialize_agent(system_prompt="Test", instructions="Test")
+                    # Register RAG tools
+                    agent._register_tools()
+                    assert MockIntegrated.called
+                    # assert MockRAG.called
+                    # Not sure why RAGSearch tool is not registered
+                    # Need to double-check with @Tonic
+                    assert hasattr(agent._agent, "tool")
 
 
 # BioinformaticsAgent Tests
@@ -1081,7 +1092,7 @@ class TestBioinformaticsAgent:
     async def test_fuse_data_success(self, mock_pydantic_agent):
         """Test successful data fusion."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = BioinformaticsAgent("openai:gpt-4o")
+            agent = BioinformaticsAgent()
 
             mock_result = Mock(spec=AgentResult)
             mock_result.success = True
@@ -1113,7 +1124,7 @@ class TestBioinformaticsAgent:
     async def test_fuse_data_failure(self, mock_pydantic_agent):
         """Test data fusion failure handling."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = BioinformaticsAgent("openai:gpt-4o")
+            agent = BioinformaticsAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Fusion failed")
 
@@ -1133,7 +1144,7 @@ class TestBioinformaticsAgent:
     async def test_perform_reasoning_success(self, mock_pydantic_agent):
         """Test successful reasoning operation."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = BioinformaticsAgent("openai:gpt-4o")
+            agent = BioinformaticsAgent()
 
             mock_result = Mock(spec=AgentResult)
             mock_result.data = {
@@ -1165,7 +1176,7 @@ class TestBioinformaticsAgent:
     async def test_perform_reasoning_failure(self, mock_pydantic_agent):
         """Test reasoning failure handling."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = BioinformaticsAgent("openai:gpt-4o")
+            agent = BioinformaticsAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Reasoning failed")
 
@@ -1213,7 +1224,7 @@ class TestDeepSearchAgent:
     async def test_deep_search_success(self, mock_pydantic_agent):
         """Test successful deep search."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = DeepSearchAgent("openai:gpt-4o")
+            agent = DeepSearchAgent()
 
             mock_result = Mock(spec=AgentResult)
             mock_result.data = {
@@ -1232,7 +1243,7 @@ class TestDeepSearchAgent:
     async def test_deep_search_with_custom_steps(self, mock_pydantic_agent):
         """Test deep search with custom max steps."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = DeepSearchAgent("openai:gpt-4o")
+            agent = DeepSearchAgent()
 
             mock_result = Mock(spec=AgentResult)
             mock_result.data = {"answer": "test", "iterations": 10}
@@ -1247,7 +1258,7 @@ class TestDeepSearchAgent:
     async def test_deep_search_failure(self, mock_pydantic_agent):
         """Test deep search failure handling."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = DeepSearchAgent("openai:gpt-4o")
+            agent = DeepSearchAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Deep search failed")
 
@@ -1282,7 +1293,7 @@ class TestEvaluatorAgent:
     async def test_evaluate_success(self, mock_pydantic_agent):
         """Test successful evaluation."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = EvaluatorAgent("openai:gpt-4o")
+            agent = EvaluatorAgent()
 
             mock_result = Mock(spec=AgentResult)
             mock_result.data = {
@@ -1304,7 +1315,7 @@ class TestEvaluatorAgent:
     async def test_evaluate_poor_answer(self, mock_pydantic_agent):
         """Test evaluation of poor answer."""
         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = EvaluatorAgent("openai:gpt-4o")
+            agent = EvaluatorAgent()
 
             mock_result = Mock(spec=AgentResult)
             mock_result.data = {
@@ -1332,7 +1343,193 @@ class TestEvaluatorAgent:
             assert "error" in result
 
 
-# # Integration Tests
+# Integration Tests for DeepAgent w/ PlanningAgent
+class TestDeepAgentPlanningAgent:
+    """Integration tests for DeepAgent fused with other Agents."""
+
+    def test_initialization_default_model(self):
+        """Test DeepAgentPlanningAgent initialization with default model."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = DeepAgentPlanningAgent()
+
+            mock_deep_agent = Mock(spec=PlanningAgent)
+            agent._deep_agent = mock_deep_agent
+
+            assert agent.agent_type == AgentType.DEEP_AGENT_PLANNING
+            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent._deep_agent is not None
+
+    @pytest.mark.asyncio
+    async def test_create_plan_with_deep_agent(self):
+        agent = DeepAgentPlanningAgent()
+
+        mock_deep_agent = Mock(spec=PlanningAgent)
+        mock_result = AgentExecutionResult(
+            success=True,
+            result={"plan": "Mock plan"},
+            error=None,
+            execution_time=0.12,
+            tools_used=["mock_tool"],
+        )
+        mock_deep_agent.create_plan.return_value = mock_result
+
+        # Inject mock deep agent
+        agent._deep_agent = mock_deep_agent
+
+        result = await agent.create_plan("Organize research tasks")
+        assert result.result is not None
+        assert result.success is True
+        assert "plan" in result.result.keys()
+        mock_deep_agent.create_plan.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_plan_without_deep_agent(self):
+        agent = DeepAgentPlanningAgent()
+        agent._deep_agent = None
+
+        with patch.object(agent, "execute", AsyncMock()) as mock_execute:
+            mock_execute.return_value = AsyncMock(
+                success=True,
+                data={"plan": "Fallback plan"},
+                error=None,
+                execution_time=0.2,
+            )
+
+            result = await agent.create_plan("Fallback planning task")
+
+        assert result.result is not None
+        assert result.success is True
+        assert result.tools_used == ["standard_planning"]
+        assert result.result["plan"] == "Fallback plan"
+        mock_execute.assert_awaited_once()
+
+
+class TestDeepAgentFilesystem:
+    """Integration tests for DeepAgent fused with other Agents."""
+
+    def test_initialization_default_model(self):
+        """Test DeepAgentFilesystemAgent initialization with default model."""
+        with patch("DeepResearch.agents.Agent"):
+            agent = DeepAgentFilesystemAgent()
+
+            mock_deep_agent = Mock(spec=PlanningAgent)
+            agent._deep_agent = mock_deep_agent
+
+            assert agent.agent_type == AgentType.DEEP_AGENT_FILESYSTEM
+            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent._deep_agent is not None
+
+    @pytest.mark.asyncio
+    async def test_manage_files_with_deep_agent(self):
+        agent = DeepAgentFilesystemAgent()
+        mock_deep_agent = AsyncMock()
+        mock_result = AgentExecutionResult(
+            success=True,
+            result={"status": "file_listed"},
+            error=None,
+            execution_time=0.05,
+            tools_used=["list_files"],
+        )
+        mock_deep_agent.manage_files.return_value = mock_result
+        agent._deep_agent = mock_deep_agent
+
+        result = await agent.manage_files("list_files")
+        assert result.success
+        assert result.result is not None
+        assert result.result["status"] == "file_listed"
+        mock_deep_agent.manage_files.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_manage_files_fallback(self):
+        agent = DeepAgentFilesystemAgent()
+        agent._deep_agent = None
+
+        with patch.object(agent, "execute", AsyncMock()) as mock_execute:
+            mock_execute.return_value = AsyncMock(
+                success=True,
+                data={"status": "fallback_operation"},
+                error=None,
+                execution_time=0.12,
+            )
+
+            result = await agent.manage_files("write_file")
+
+        assert result.success
+        assert result.result is not None
+        assert result.result["status"] == "fallback_operation"
+        assert result.tools_used == ["standard_filesystem"]
+
+
+class TestDeepAgentResearchAgent:
+    @pytest.mark.asyncio
+    async def test_conduct_research_with_deep_agent(self):
+        agent = DeepAgentResearchAgent()
+        mock_deep_agent = AsyncMock()
+        mock_result = AgentExecutionResult(
+            success=True,
+            result={"summary": "AI accelerates discovery"},
+            error=None,
+            execution_time=0.32,
+            tools_used=["rag_query"],
+        )
+        mock_deep_agent.conduct_research.return_value = mock_result
+        agent._deep_agent = mock_deep_agent
+
+        result = await agent.conduct_research("impact of AI on bioinformatics")
+        assert result.success
+        assert result.result is not None
+        assert "summary" in result.result
+        mock_deep_agent.conduct_research.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_conduct_research_fallback(self):
+        agent = DeepAgentResearchAgent()
+        agent._deep_agent = None
+
+        with patch.object(agent, "execute", AsyncMock()) as mock_execute:
+            mock_execute.return_value = AsyncMock(
+                success=True,
+                data={"summary": "Fallback executed"},
+                error=None,
+                execution_time=0.15,
+            )
+
+            result = await agent.conduct_research("fallback test")
+
+        assert result.success
+        assert result.result is not None
+        assert result.result["summary"] == "Fallback executed"
+        assert result.tools_used == ["standard_research"]
+
+
+def test_agent_creation():
+    agent_classes = {
+        AgentType.PARSER: ParserAgent,
+        AgentType.PLANNER: PlannerAgent,
+        AgentType.EXECUTOR: ExecutorAgent,
+        AgentType.SEARCH: SearchAgent,
+        AgentType.RAG: RAGAgent,
+        AgentType.BIOINFORMATICS: BioinformaticsAgent,
+        AgentType.DEEPSEARCH: DeepSearchAgent,
+        AgentType.EVALUATOR: EvaluatorAgent,
+        # DeepAgent types
+        AgentType.DEEP_AGENT_PLANNING: DeepAgentPlanningAgent,
+        AgentType.DEEP_AGENT_FILESYSTEM: DeepAgentFilesystemAgent,
+        AgentType.DEEP_AGENT_RESEARCH: DeepAgentResearchAgent,
+        AgentType.DEEP_AGENT_ORCHESTRATION: DeepAgentOrchestrationAgent,
+        AgentType.DEEP_AGENT_GENERAL: DeepAgentGeneralAgent,
+    }
+    for agent_type, agent_class in agent_classes.items():
+        with patch("DeepResearch.agents.Agent"):
+            agent = create_agent(agent_type=agent_type)
+
+            assert agent.agent_type == agent_type
+            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent._agent is not None
+            assert isinstance(agent, agent_class)
+
+
+# # Additional Integration Tests
 # class TestSpecializedAgentsIntegration:
 #     """Integration tests for specialized agents."""
 
@@ -1356,11 +1553,7 @@ class TestEvaluatorAgent:
 
 #                 # Planner result
 #                 mock_agent.run.return_value = Mock(
-#                     data={
-#                         "steps": [
-#                             {"tool": "test_tool", "params": {"query": "test"}}
-#                         ]
-#                     }
+#                     data={"steps": [{"tool": "test_tool", "params": {"query": "test"}}]}
 #                 )
 #                 planner = PlannerAgent()
 #                 plan = await planner.create_plan(parsed)
