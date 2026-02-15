@@ -42,6 +42,7 @@ from .src.prompts.agents import AgentPrompts
 
 # Import existing tools and schemas
 from .src.tools.base import ExecutionResult, registry
+from .src.utils.model_resolver import get_model
 
 
 class BaseAgent(ABC):
@@ -77,13 +78,13 @@ class BaseAgent(ABC):
     def __init__(
         self,
         agent_type: AgentType,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str | None = None,
         dependencies: AgentDependencies | None = None,
         system_prompt: str | None = None,
         instructions: str | None = None,
     ):
         self.agent_type = agent_type
-        self.model_name = model_name
+        self.model_name = model_name or get_model()
         self.dependencies = dependencies or AgentDependencies()
         self.status = AgentStatus.IDLE
         self.history = ExecutionHistory()
@@ -276,7 +277,7 @@ class BaseAgent(ABC):
 class ParserAgent(BaseAgent):
     """Agent for parsing and understanding research questions."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.PARSER, model_name, **kwargs)
 
     def _register_tools(self):
@@ -301,7 +302,7 @@ class ParserAgent(BaseAgent):
 class PlannerAgent(BaseAgent):
     """Agent for planning research workflows."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.PLANNER, model_name, **kwargs)
 
     def _register_tools(self):
@@ -350,7 +351,7 @@ class ExecutorAgent(BaseAgent):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str | None = None,
         retries: int = 2,
         **kwargs,
     ):
@@ -455,7 +456,7 @@ class ExecutorAgent(BaseAgent):
 class SearchAgent(BaseAgent):
     """Agent for web search operations."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.SEARCH, model_name, **kwargs)
 
     def _register_tools(self):
@@ -492,7 +493,7 @@ class SearchAgent(BaseAgent):
 class RAGAgent(BaseAgent):
     """Agent for RAG (Retrieval-Augmented Generation) operations."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.RAG, model_name, **kwargs)
 
     def _register_tools(self):
@@ -534,7 +535,7 @@ class RAGAgent(BaseAgent):
 class BioinformaticsAgent(BaseAgent):
     """Agent for bioinformatics data fusion and reasoning."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.BIOINFORMATICS, model_name, **kwargs)
 
     def _register_tools(self):
@@ -595,7 +596,7 @@ class BioinformaticsAgent(BaseAgent):
 class DeepSearchAgent(BaseAgent):
     """Agent for deep search operations with iterative refinement."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.DEEPSEARCH, model_name, **kwargs)
 
     def _register_tools(self):
@@ -651,7 +652,7 @@ class DeepSearchAgent(BaseAgent):
 class EvaluatorAgent(BaseAgent):
     """Agent for evaluating research results and quality."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.EVALUATOR, model_name, **kwargs)
 
     def _register_tools(self):
@@ -685,7 +686,7 @@ class EvaluatorAgent(BaseAgent):
 class DeepAgentPlanningAgent(BaseAgent):
     """DeepAgent planning agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.DEEP_AGENT_PLANNING, model_name, **kwargs)
         self._deep_agent = None
         self._initialize_deep_agent()
@@ -746,7 +747,7 @@ class DeepAgentPlanningAgent(BaseAgent):
 class DeepAgentFilesystemAgent(BaseAgent):
     """DeepAgent filesystem agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.DEEP_AGENT_FILESYSTEM, model_name, **kwargs)
         self._deep_agent = None
         self._initialize_deep_agent()
@@ -814,7 +815,7 @@ class DeepAgentFilesystemAgent(BaseAgent):
 class DeepAgentResearchAgent(BaseAgent):
     """DeepAgent research agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.DEEP_AGENT_RESEARCH, model_name, **kwargs)
         self._deep_agent = None
         self._initialize_deep_agent()
@@ -880,7 +881,7 @@ class DeepAgentResearchAgent(BaseAgent):
 class DeepAgentOrchestrationAgent(BaseAgent):
     """DeepAgent orchestration agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.DEEP_AGENT_ORCHESTRATION, model_name, **kwargs)
         self._deep_agent = None
         self._orchestrator = None
@@ -958,7 +959,7 @@ class DeepAgentOrchestrationAgent(BaseAgent):
 class DeepAgentGeneralAgent(BaseAgent):
     """DeepAgent general-purpose agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0", **kwargs):
+    def __init__(self, model_name: str | None = None, **kwargs):
         super().__init__(AgentType.DEEP_AGENT_GENERAL, model_name, **kwargs)
         self._deep_agent = None
         self._initialize_deep_agent()
@@ -1040,7 +1041,7 @@ class MultiAgentOrchestrator:
 
     def _initialize_agents(self):
         """Initialize all available agents."""
-        model_name = self.config.get("model", "anthropic:claude-sonnet-4-0")
+        model_name = self.config.get("model") or get_model()
 
         # Initialize core agents
         self.agents[AgentType.PARSER] = ParserAgent(model_name)
