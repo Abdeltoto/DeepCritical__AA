@@ -6,17 +6,10 @@ for various DeepCritical operations including bioinformatics, RAG,
 search, and code execution workflows.
 """
 
-from .bioinformatics_workflow import (
-    AssessDataQuality,
-    BioinformaticsState,
-    CreateReasoningTask,
-    FuseDataSources,
-    ParseBioinformaticsQuery,
-    PerformReasoning,
-)
-from .bioinformatics_workflow import (
-    SynthesizeResults as BioSynthesizeResults,
-)
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
 
 # from .deepsearch_workflow import (
 #     DeepSearchState,
@@ -41,6 +34,22 @@ from .code_execution_workflow import (
     execute_code_workflow,
     generate_and_execute_code,
 )
+from .hypothesis_workflow import (
+    CreateTestingPlans,
+    HypothesisError,
+    HypothesisWorkflowState,
+    ParseHypothesisRequest,
+    ScoreAndRankHypotheses,
+    SynthesizeHypothesisReport,
+    create_hypothesis_workflow,
+    run_hypothesis_workflow,
+)
+from .hypothesis_workflow import (
+    GatherEvidence as GatherHypothesisEvidence,
+)
+from .hypothesis_workflow import (
+    GenerateHypotheses as GenerateHypothesesNode,
+)
 from .rag_workflow import (
     GenerateResponse,
     InitializeRAG,
@@ -60,6 +69,27 @@ from .search_workflow import (
     SearchWorkflowState,
 )
 
+_BIOINFORMATICS_EXPORTS = {
+    "AssessDataQuality": "AssessDataQuality",
+    "BioinformaticsState": "BioinformaticsState",
+    "BioSynthesizeResults": "SynthesizeResults",
+    "CreateReasoningTask": "CreateReasoningTask",
+    "FuseDataSources": "FuseDataSources",
+    "ParseBioinformaticsQuery": "ParseBioinformaticsQuery",
+    "PerformReasoning": "PerformReasoning",
+    "bioinformatics_workflow": "bioinformatics_workflow",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _BIOINFORMATICS_EXPORTS:
+        module = import_module(f"{__name__}.bioinformatics_workflow")
+        return getattr(module, _BIOINFORMATICS_EXPORTS[name])
+
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
 __all__ = [
     "AnalyzeError",
     "AssessDataQuality",
@@ -70,6 +100,7 @@ __all__ = [
     "CodeExecutionWorkflowState",
     "CompleteDeepSearch",
     "CreateReasoningTask",
+    "CreateTestingPlans",
     "DeepSearchError",
     "DeepSearchState",
     "DeepSearchSynthesizeResults",
@@ -78,9 +109,13 @@ __all__ = [
     "ExecuteSearchStep",
     "FormatResponse",
     "FuseDataSources",
+    "GatherHypothesisEvidence",
     "GenerateCode",
     "GenerateFinalResponse",
+    "GenerateHypothesesNode",
     "GenerateResponse",
+    "HypothesisError",
+    "HypothesisWorkflowState",
     "ImproveCode",
     "InitializeCodeExecution",
     "InitializeDeepSearch",
@@ -88,6 +123,7 @@ __all__ = [
     "InitializeSearch",
     "LoadDocuments",
     "ParseBioinformaticsQuery",
+    "ParseHypothesisRequest",
     "PerformReasoning",
     "PerformWebSearch",
     "PlanSearchStrategy",
@@ -96,9 +132,13 @@ __all__ = [
     "QueryRAG",
     "RAGError",
     "RAGState",
+    "ScoreAndRankHypotheses",
     "SearchWorkflowError",
     "SearchWorkflowState",
     "StoreDocuments",
+    "SynthesizeHypothesisReport",
+    "create_hypothesis_workflow",
     "execute_code_workflow",
     "generate_and_execute_code",
+    "run_hypothesis_workflow",
 ]
