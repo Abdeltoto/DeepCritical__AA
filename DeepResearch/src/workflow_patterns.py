@@ -215,7 +215,7 @@ class WorkflowPatternExecutor:
         """Execute collaborative pattern workflow."""
         from omegaconf import DictConfig, OmegaConf
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_collaborative_pattern_workflow(
             question=question,
@@ -235,7 +235,7 @@ class WorkflowPatternExecutor:
         """Execute sequential pattern workflow."""
         from omegaconf import DictConfig, OmegaConf
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_sequential_pattern_workflow(
             question=question,
@@ -256,7 +256,7 @@ class WorkflowPatternExecutor:
         """Execute hierarchical pattern workflow."""
         from omegaconf import DictConfig, OmegaConf
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_hierarchical_pattern_workflow(
             question=question,
@@ -278,7 +278,7 @@ class WorkflowPatternExecutor:
         """Execute workflow with specified pattern."""
         from omegaconf import DictConfig, OmegaConf
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_pattern_workflow(
             question=question,
