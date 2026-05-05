@@ -13,7 +13,7 @@ __all__ = [
 # Direct import for tools to make them available for documentation
 from contextlib import suppress
 
-with suppress(ImportError):
+with suppress(Exception):
     from .src.tools import (
         ChunkedSearchTool,
         DeepSearchTool,

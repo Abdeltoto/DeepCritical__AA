@@ -7,6 +7,7 @@ planning, filesystem, subagent orchestration, summarization, and prompt caching.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -109,14 +110,11 @@ class PlanningMiddleware(BaseMiddleware):
         self, agent: Agent, ctx: RunContext[DeepAgentState], **kwargs
     ) -> dict[str, Any]:
         """Execute planning middleware logic."""
-        # Register planning tools with the agent
-        for tool in self.tools:
-            if hasattr(agent, "add_tool"):
-                add_tool_method = getattr(agent, "add_tool", None)
-                if add_tool_method is not None and callable(add_tool_method):
-                    add_tool_method(tool)
+        # DeepAgent middleware is experimental; keep it side-effect free unless enabled.
+        if os.getenv("DEEPC_ENABLE_DEEP_AGENT_MIDDLEWARE", "0") != "1":
+            return {"modified_state": False, "metadata": {"skipped": True}}
 
-        # Add planning context to system prompt
+        # Add planning context to shared state (no tool mutation).
         planning_state = ctx.deps.get_planning_state()
         if planning_state.todos:
             todo_summary = f"Current todos: {len(planning_state.todos)} total, {len(planning_state.get_pending_todos())} pending, {len(planning_state.get_in_progress_todos())} in progress"
@@ -125,7 +123,6 @@ class PlanningMiddleware(BaseMiddleware):
         return {
             "modified_state": True,
             "metadata": {
-                "tools_registered": len(self.tools),
                 "todos_count": len(planning_state.todos),
             },
         }
@@ -150,12 +147,8 @@ class FilesystemMiddleware(BaseMiddleware):
         self, agent: Agent, ctx: RunContext[DeepAgentState], **kwargs
     ) -> dict[str, Any]:
         """Execute filesystem middleware logic."""
-        # Register filesystem tools with the agent
-        for tool in self.tools:
-            if hasattr(agent, "add_tool"):
-                add_tool_method = getattr(agent, "add_tool", None)
-                if add_tool_method is not None and callable(add_tool_method):
-                    add_tool_method(tool)
+        if os.getenv("DEEPC_ENABLE_DEEP_AGENT_MIDDLEWARE", "0") != "1":
+            return {"modified_state": False, "metadata": {"skipped": True}}
 
         # Add filesystem context to system prompt
         filesystem_state = ctx.deps.get_filesystem_state()
@@ -168,7 +161,6 @@ class FilesystemMiddleware(BaseMiddleware):
         return {
             "modified_state": True,
             "metadata": {
-                "tools_registered": len(self.tools),
                 "files_count": len(filesystem_state.files),
             },
         }
@@ -196,12 +188,8 @@ class SubAgentMiddleware(BaseMiddleware):
         self, agent: Agent, ctx: RunContext[DeepAgentState], **kwargs
     ) -> dict[str, Any]:
         """Execute subagent middleware logic."""
-        # Register task tool with the agent
-        for tool in self.tools:
-            if hasattr(agent, "add_tool"):
-                add_tool_method = getattr(agent, "add_tool", None)
-                if add_tool_method is not None and callable(add_tool_method):
-                    add_tool_method(tool)
+        if os.getenv("DEEPC_ENABLE_DEEP_AGENT_MIDDLEWARE", "0") != "1":
+            return {"modified_state": False, "metadata": {"skipped": True}}
 
         # Initialize subagents if not already done
         if not self._agent_registry:
@@ -217,7 +205,6 @@ class SubAgentMiddleware(BaseMiddleware):
         return {
             "modified_state": True,
             "metadata": {
-                "tools_registered": len(self.tools),
                 "subagents_available": len(self.subagents),
                 "agent_registry_size": len(self._agent_registry),
             },
@@ -246,7 +233,7 @@ class SubAgentMiddleware(BaseMiddleware):
 
         # Create a basic agent (this would be more sophisticated in practice)
         # agent = Agent(
-        #     model=subagent.model or "anthropic:claude-sonnet-4-0",
+        #     model=subagent.model or DEFAULT_PYDANTIC_AI_MODEL,
         #     system_prompt=subagent.prompt,
         #     tools=self.default_tools
         # )
@@ -494,6 +481,11 @@ def create_default_middleware_pipeline(
     default_tools: list[Callable] | None = None,
 ) -> MiddlewarePipeline:
     """Create a default middleware pipeline with common middleware."""
+    # This DeepAgent middleware system is currently experimental and intentionally
+    # disabled by default. Enable explicitly to opt in.
+    if os.getenv("DEEPC_ENABLE_DEEP_AGENT_MIDDLEWARE", "0") != "1":
+        return MiddlewarePipeline()
+
     pipeline = MiddlewarePipeline()
 
     # Add middleware in order of priority

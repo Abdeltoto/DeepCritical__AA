@@ -27,12 +27,23 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 
+def _http_base_from_embeddings_config(config: EmbeddingsConfig) -> str:
+    """Normalize base URL: accept full URL or host:port without double ``http://``."""
+    bu = config.base_url
+    if bu is None:
+        return "http://localhost:8000"
+    s = str(bu).rstrip("/")
+    if s.startswith("http://") or s.startswith("https://"):
+        return s
+    return f"http://{s}"
+
+
 class VLLMEmbeddings(Embeddings):
     """VLLM-based embedding provider."""
 
     def __init__(self, config: EmbeddingsConfig):
         super().__init__(config)
-        self.base_url = f"http://{config.base_url or 'localhost:8000'}"
+        self.base_url = _http_base_from_embeddings_config(config)
         self.session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self):
@@ -179,60 +190,70 @@ class VLLMLLMProvider(LLMProvider):
     async def generate_stream(
         self, prompt: str, context: str | None = None, **kwargs: Any
     ) -> AsyncGenerator[str, None]:
-        """Generate streaming text using the LLM."""
-        full_prompt = prompt
-        if context:
-            full_prompt = f"Context: {context}\n\n{prompt}"
+        """
+        Generate streaming text using the LLM.
 
-        payload = {
-            "model": self.config.model_name,
-            "messages": [{"role": "user", "content": full_prompt}],
-            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
-            "temperature": kwargs.get("temperature", self.config.temperature),
-            "top_p": kwargs.get("top_p", self.config.top_p),
-            "frequency_penalty": kwargs.get(
-                "frequency_penalty", self.config.frequency_penalty
-            ),
-            "presence_penalty": kwargs.get(
-                "presence_penalty", self.config.presence_penalty
-            ),
-            "stop": kwargs.get("stop", self.config.stop),
-            "stream": True,
-        }
+        This must be a coroutine (not an async generator) to match the base
+        `LLMProvider.generate_stream` signature, so we return an async generator
+        object from an inner generator.
+        """
 
-        if not self.session:
-            self.session = aiohttp.ClientSession()
+        async def _stream() -> AsyncGenerator[str, None]:
+            full_prompt = prompt
+            if context:
+                full_prompt = f"Context: {context}\n\n{prompt}"
 
-        url = f"{self.base_url}/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": (
-                f"Bearer {self.config.api_key}" if self.config.api_key else ""
-            ),
-        }
+            payload = {
+                "model": self.config.model_name,
+                "messages": [{"role": "user", "content": full_prompt}],
+                "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+                "temperature": kwargs.get("temperature", self.config.temperature),
+                "top_p": kwargs.get("top_p", self.config.top_p),
+                "frequency_penalty": kwargs.get(
+                    "frequency_penalty", self.config.frequency_penalty
+                ),
+                "presence_penalty": kwargs.get(
+                    "presence_penalty", self.config.presence_penalty
+                ),
+                "stop": kwargs.get("stop", self.config.stop),
+                "stream": True,
+            }
 
-        try:
-            async with self.session.post(
-                url, json=payload, headers=headers
-            ) as response:
-                response.raise_for_status()
-                async for line in response.content:
-                    line = line.decode("utf-8").strip()
-                    if line.startswith("data: "):
-                        data = line[6:]  # Remove 'data: ' prefix
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            if "choices" in chunk and len(chunk["choices"]) > 0:
-                                delta = chunk["choices"][0].get("delta", {})
-                                if "content" in delta:
-                                    yield delta["content"]
-                        except json.JSONDecodeError:
-                            continue
-        except Exception as e:
-            msg = f"Failed to generate streaming text: {e}"
-            raise RuntimeError(msg)
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
+            url = f"{self.base_url}/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": (
+                    f"Bearer {self.config.api_key}" if self.config.api_key else ""
+                ),
+            }
+
+            try:
+                async with self.session.post(
+                    url, json=payload, headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.content:
+                        line = line.decode("utf-8").strip()
+                        if line.startswith("data: "):
+                            data = line[6:]  # Remove 'data: ' prefix
+                            if data == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data)
+                                if "choices" in chunk and len(chunk["choices"]) > 0:
+                                    delta = chunk["choices"][0].get("delta", {})
+                                    if "content" in delta:
+                                        yield delta["content"]
+                            except json.JSONDecodeError:
+                                continue
+            except Exception as e:
+                msg = f"Failed to generate streaming text: {e}"
+                raise RuntimeError(msg)
+
+        return _stream()
 
 
 class VLLMServerConfig(BaseModel):

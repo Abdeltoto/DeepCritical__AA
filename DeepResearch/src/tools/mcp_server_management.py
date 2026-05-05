@@ -64,6 +64,10 @@ class MCPServerProtocol(Protocol):
         """Run a specific tool."""
         ...
 
+    # Back-compat aliases used by some server implementations/dispatch paths.
+    def execute_tool(self, tool_name: str, **kwargs) -> Any: ...
+    async def execute_tool_async(self, request: Any) -> Any: ...
+
 
 # Placeholder classes for servers not yet implemented
 class BWAServer(MCPServerProtocol):
@@ -295,7 +299,7 @@ class MCPServerListTool(ToolRunner):
 
                 if include_tools:
                     try:
-                        server_instance: MCPServerProtocol = server_class()  # type: ignore[assignment]
+                        server_instance = server_class()
                         server_info["tools"] = server_instance.list_tools()
                     except Exception as e:
                         server_info["tools"] = []

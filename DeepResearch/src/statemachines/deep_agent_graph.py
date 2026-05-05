@@ -22,6 +22,7 @@ from DeepResearch.src.datatypes.deep_agent_types import (
     CustomSubAgent,
     SubAgent,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.tools.deep_agent_middleware import (
     create_default_middleware_pipeline,
 )
@@ -38,7 +39,7 @@ from DeepResearch.src.tools.deep_agent_tools import (
 class AgentBuilderConfig(BaseModel):
     """Configuration for agent builder."""
 
-    model_name: str = Field("anthropic:claude-sonnet-4-0", description="Model name")
+    model_name: str = Field(default=DEFAULT_PYDANTIC_AI_MODEL, description="Model name")
     instructions: str = Field("", description="Additional instructions")
     tools: list[str] = Field(default_factory=list, description="Tool names to include")
     subagents: list[SubAgent | CustomSubAgent] = Field(
@@ -413,7 +414,7 @@ class AgentBuilder:
             subagents=self.config.subagents
         )
 
-    def build_agent(self) -> Agent:
+    def build_agent(self) -> Agent[DeepAgentState, str]:
         """Build an agent with the configured middleware and tools."""
         # Create base agent
         agent = Agent(
@@ -448,7 +449,7 @@ class AgentBuilder:
 
         return base_prompt
 
-    def _add_tools(self, agent: Agent) -> None:
+    def _add_tools(self, agent: Agent[DeepAgentState, str]) -> None:
         """Add tools to the agent."""
         tool_map = {
             "write_todos": write_todos_tool,
@@ -470,7 +471,7 @@ class AgentBuilder:
                     if hasattr(tools_attr, "append") and callable(tools_attr.append):
                         tools_attr.append(tool_map[tool_name])  # type: ignore
 
-    def _add_middleware(self, agent: Agent) -> None:
+    def _add_middleware(self, agent: Agent[DeepAgentState, str]) -> None:
         """Add middleware to the agent."""
         # In a real implementation, you would integrate middleware
         # with the Pydantic AI agent system
@@ -497,7 +498,7 @@ class AgentBuilder:
 
 # Factory functions
 def create_agent_builder(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     instructions: str = "",
     tools: list[str] | None = None,
     subagents: list[SubAgent | CustomSubAgent] | None = None,
@@ -515,10 +516,10 @@ def create_agent_builder(
 
 
 def create_simple_agent(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     instructions: str = "",
     tools: list[str] | None = None,
-) -> Agent:
+) -> Agent[DeepAgentState, str]:
     """Create a simple agent with basic configuration."""
     builder = create_agent_builder(model_name, instructions, tools)
     return builder.build_agent()
@@ -528,9 +529,9 @@ def create_deep_agent(
     tools: list[str] | None = None,
     instructions: str = "",
     subagents: list[SubAgent | CustomSubAgent] | None = None,
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     **kwargs,
-) -> Agent:
+) -> Agent[DeepAgentState, str]:
     """Create a deep agent with full capabilities."""
     default_tools = [
         "write_todos",
@@ -556,9 +557,9 @@ def create_async_deep_agent(
     tools: list[str] | None = None,
     instructions: str = "",
     subagents: list[SubAgent | CustomSubAgent] | None = None,
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     **kwargs,
-) -> Agent:
+) -> Agent[DeepAgentState, str]:
     """Create an async deep agent with full capabilities."""
     # For now, this is the same as create_deep_agent
     # In a real implementation, you would configure async-specific settings

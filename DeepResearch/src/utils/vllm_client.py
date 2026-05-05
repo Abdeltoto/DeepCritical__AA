@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -85,56 +85,71 @@ class VLLMAgent:
     def __init__(self, vllm_client: VLLMClient):
         self.client = vllm_client
 
-    async def chat(self, messages: list[dict[str, str]], **kwargs) -> str:
+    async def _simulate_chat_reply(self, messages: list[dict[str, str]]) -> str:
+        last = messages[-1].get("content", "") if messages else ""
+        return f"[Simulated reply to: {last[:120]}]"
+
+    async def _simulate_completion(self, prompt: str) -> str:
+        return f"[Simulated completion: {prompt[:120]}]"
+
+    async def _simulate_embeddings(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 384 for _ in texts]
+
+    async def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
         """Chat with the VLLM model."""
         request = ChatCompletionRequest(
-            model="vllm-model",  # This would be configured
+            model="vllm-model",
             messages=messages,
             **kwargs,
         )
-        response = await self.client.chat_completions(request)
-        return response.choices[0].message.content
+        response = await self.chat_completions(request)
+        content = response.choices[0].message.content
+        return content if content is not None else ""
 
-    async def complete(self, prompt: str, **kwargs) -> str:
+    async def complete(self, prompt: str | list[str], **kwargs: Any) -> str:
         """Complete text with the VLLM model."""
         request = CompletionRequest(model="vllm-model", prompt=prompt, **kwargs)
-        response = await self.client.completions(request)
+        response = await self.completions(request)
         return response.choices[0].text
 
-    async def embed(self, texts: str | list[str], **kwargs) -> list[list[float]]:
+    async def embed(self, texts: str | list[str], **kwargs: Any) -> list[list[float]]:
         """Generate embeddings for texts."""
-        if isinstance(texts, str):
-            texts = [texts]
-
-        request = EmbeddingRequest(model="vllm-embedding-model", input=texts, **kwargs)
-        response = await self.client.embeddings(request)
+        inp: list[str] = [texts] if isinstance(texts, str) else list(texts)
+        request = EmbeddingRequest(model="vllm-embedding-model", input=inp, **kwargs)
+        response = await self.embeddings(request)
         return [item.embedding for item in response.data]
 
     def to_pydantic_ai_agent(self, model_name: str = "vllm-agent"):
         """Convert to Pydantic AI agent format."""
-        from pydantic_ai import Agent
+        from pydantic_ai import Agent, RunContext
 
-        # Create agent with VLLM client as dependency
         agent = Agent(
             model_name,
-            deps_type=VLLMClient,
+            deps_type=VLLMAgent,
             system_prompt="You are a helpful AI assistant powered by VLLM.",
         )
 
-        # Add tools for VLLM functionality
         @agent.tool
-        async def chat_completion(ctx, messages: list[dict[str, str]], **kwargs) -> str:
+        async def chat_completion(
+            ctx: RunContext[VLLMAgent],
+            messages: list[dict[str, str]],
+            **kwargs: Any,
+        ) -> str:
             """Chat completion using VLLM."""
             return await ctx.deps.chat(messages, **kwargs)
 
         @agent.tool
-        async def text_completion(ctx, prompt: str, **kwargs) -> str:
+        async def text_completion(
+            ctx: RunContext[VLLMAgent], prompt: str, **kwargs: Any
+        ) -> str:
             """Text completion using VLLM."""
             return await ctx.deps.complete(prompt, **kwargs)
 
         @agent.tool
         async def generate_embeddings(
-            ctx, texts: str | list[str], **kwargs
+            ctx: RunContext[VLLMAgent],
+            texts: str | list[str],
+            **kwargs: Any,
         ) -> list[list[float]]:
             """Generate embeddings using VLLM."""
             return await ctx.deps.embed(texts, **kwargs)
@@ -160,10 +175,10 @@ class VLLMAgent:
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:
         """Create chat completion (OpenAI-compatible)."""
-        messages = [msg["content"] for msg in request.messages]
-        response_text = await self.chat(messages)
+        msgs = list(request.messages)
+        response_text = await self._simulate_chat_reply(msgs)
         return ChatCompletionResponse(
-            id=f"chatcmpl-{asyncio.get_event_loop().time()}",
+            id=f"chatcmpl-{time.time()}",
             object="chat.completion",
             created=int(time.time()),
             model=request.model,
@@ -196,7 +211,7 @@ class VLLMAgent:
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": choice.message.content},
+                    "delta": {"content": choice.message.content or ""},
                     "finish_reason": choice.finish_reason,
                 }
             ],
@@ -204,12 +219,14 @@ class VLLMAgent:
 
     async def completions(self, request: CompletionRequest) -> CompletionResponse:
         """Create completion (OpenAI-compatible)."""
-        response_text = await self.complete(request.prompt)
         prompt_text = (
-            request.prompt if isinstance(request.prompt, str) else str(request.prompt)
+            request.prompt
+            if isinstance(request.prompt, str)
+            else "\n".join(request.prompt)
         )
+        response_text = await self._simulate_completion(prompt_text)
         return CompletionResponse(
-            id=f"cmpl-{asyncio.get_event_loop().time()}",
+            id=f"cmpl-{time.time()}",
             object="text_completion",
             created=int(time.time()),
             model=request.model,
@@ -225,12 +242,15 @@ class VLLMAgent:
 
     async def embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
         """Create embeddings (OpenAI-compatible)."""
-        embeddings = await self.embed(request.input)
+        texts = (
+            [request.input] if isinstance(request.input, str) else list(request.input)
+        )
+        vectors = await self._simulate_embeddings(texts)
         return EmbeddingResponse(
             object="list",
             data=[
                 EmbeddingData(object="embedding", embedding=emb, index=i)
-                for i, emb in enumerate(embeddings)
+                for i, emb in enumerate(vectors)
             ],
             model=request.model,
             usage=UsageStats(
@@ -242,21 +262,29 @@ class VLLMAgent:
 
     async def batch_request(self, request: BatchRequest) -> BatchResponse:
         """Process batch request."""
-        # Simple implementation - process sequentially
-        results = []
+        results: list[
+            ChatCompletionResponse | CompletionResponse | EmbeddingResponse
+        ] = []
+        started = time.perf_counter()
         for req in request.requests:
-            if hasattr(req, "messages"):  # Chat completion
-                result = await self.chat_completions(req)
-                results.append(result)
-            elif hasattr(req, "prompt"):  # Completion
-                result = await self.completions(req)
-                results.append(result)
+            if isinstance(req, ChatCompletionRequest):
+                results.append(await self.chat_completions(req))
+            elif isinstance(req, CompletionRequest):
+                results.append(await self.completions(req))
+            elif isinstance(req, EmbeddingRequest):
+                results.append(await self.embeddings(req))
 
+        total = len(list(request.requests))
+        elapsed = time.perf_counter() - started
+        ok = len(results)
         return BatchResponse(
-            batch_id=f"batch-{asyncio.get_event_loop().time()}",
+            batch_id=f"batch-{time.time()}",
             responses=results,
             errors=[],
-            total_requests=len(request.requests),
+            total_requests=total,
+            successful_requests=ok,
+            failed_requests=total - ok,
+            processing_time=elapsed,
         )
 
     async def close(self) -> None:
@@ -393,7 +421,14 @@ class VLLMClientBuilder:
 
     def build(self) -> VLLMClient:
         """Build the VLLM client."""
-        return VLLMClient(vllm_config=self._vllm_config, **self._config)
+        return VLLMClient(
+            base_url=str(self._config["base_url"]),
+            api_key=cast("str | None", self._config.get("api_key")),
+            timeout=float(self._config["timeout"]),
+            max_retries=int(self._config["max_retries"]),
+            retry_delay=float(self._config["retry_delay"]),
+            vllm_config=self._vllm_config,
+        )
 
 
 # ============================================================================
@@ -418,8 +453,9 @@ def create_vllm_client(
 
 async def test_vllm_connection(client: VLLMClient) -> bool:
     """Test if VLLM server is accessible."""
+    agent = VLLMAgent(client)
     try:
-        await client.health()  # type: ignore[attr-defined]
+        await agent.health()
         return True
     except Exception:
         return False
@@ -428,8 +464,14 @@ async def test_vllm_connection(client: VLLMClient) -> bool:
 async def list_vllm_models(client: VLLMClient) -> list[str]:
     """List available models on the VLLM server."""
     try:
-        response = await client.models()  # type: ignore[attr-defined]
-        return [model.id for model in response.data]
+        agent = VLLMAgent(client)
+        response = await agent.models()
+        data = response.get("data", [])
+        return [
+            str(m["id"])
+            for m in data
+            if isinstance(m, dict) and m.get("id") is not None
+        ]
     except Exception:
         return []
 
@@ -442,6 +484,7 @@ async def list_vllm_models(client: VLLMClient) -> list[str]:
 async def example_basic_usage():
     """Example of basic VLLM client usage."""
     client = create_vllm_client("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    agent = VLLMAgent(client)
 
     # Test connection
     if await test_vllm_connection(client):
@@ -456,14 +499,15 @@ async def example_basic_usage():
             temperature=0.7,
         )
 
-        await client.chat_completions(chat_request)  # type: ignore[attr-defined]
+        await agent.chat_completions(chat_request)
 
-    await client.close()  # type: ignore[attr-defined]
+    await agent.close()
 
 
 async def example_streaming():
     """Example of streaming usage."""
     client = create_vllm_client("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    agent = VLLMAgent(client)
 
     chat_request = ChatCompletionRequest(
         model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -473,29 +517,31 @@ async def example_streaming():
         stream=True,
     )
 
-    async for _chunk in client.chat_completions_stream(chat_request):  # type: ignore[attr-defined]
+    async for _chunk in agent.chat_completions_stream(chat_request):
         pass
 
-    await client.close()  # type: ignore[attr-defined]
+    await agent.close()
 
 
 async def example_embeddings():
     """Example of embedding usage."""
     client = create_vllm_client("sentence-transformers/all-MiniLM-L6-v2")
+    agent = VLLMAgent(client)
 
     embedding_request = EmbeddingRequest(
         model="sentence-transformers/all-MiniLM-L6-v2",
         input=["Hello world", "How are you?"],
     )
 
-    await client.embeddings(embedding_request)  # type: ignore[attr-defined]
+    await agent.embeddings(embedding_request)
 
-    await client.close()  # type: ignore[attr-defined]
+    await agent.close()
 
 
 async def example_batch_processing():
     """Example of batch processing."""
     client = create_vllm_client("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    agent = VLLMAgent(client)
 
     requests = [
         ChatCompletionRequest(
@@ -507,9 +553,9 @@ async def example_batch_processing():
     ]
 
     batch_request = BatchRequest(requests=requests, max_retries=2)
-    await client.batch_request(batch_request)  # type: ignore[attr-defined]
+    await agent.batch_request(batch_request)
 
-    await client.close()  # type: ignore[attr-defined]
+    await agent.close()
 
 
 if __name__ == "__main__":

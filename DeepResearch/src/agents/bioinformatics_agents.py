@@ -7,10 +7,9 @@ data processing, fusion, and reasoning tasks.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
 
 from DeepResearch.src.datatypes.bioinformatics import (
     BioinformaticsAgentDeps,
@@ -22,6 +21,7 @@ from DeepResearch.src.datatypes.bioinformatics import (
     ReasoningResult,
     ReasoningTask,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.bioinformatics_agents import BioinformaticsAgentPrompts
 
 
@@ -30,22 +30,23 @@ class DataFusionAgent:
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         config: dict[str, Any] | None = None,
     ):
         self.model_name = model_name
         self.config = config or {}
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, DataFusionResult] = (
+            self._create_agent()
+        )
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Agent[BioinformaticsAgentDeps, DataFusionResult]:
         """Create the data fusion agent."""
         # Get model from config or use default
         bioinformatics_config = self.config.get("bioinformatics", {})
         agents_config = bioinformatics_config.get("agents", {})
         data_fusion_config = agents_config.get("data_fusion", {})
 
-        model_name = data_fusion_config.get("model", self.model_name)
-        model = AnthropicModel(model_name)
+        resolved_model = data_fusion_config.get("model", self.model_name)
 
         # Get system prompt from config or use default
         system_prompt = data_fusion_config.get(
@@ -53,11 +54,14 @@ class DataFusionAgent:
             BioinformaticsAgentPrompts.DATA_FUSION_SYSTEM,
         )
 
-        return Agent(
-            model=model,
-            deps_type=BioinformaticsAgentDeps,
-            output_type=DataFusionResult,
-            system_prompt=system_prompt,
+        return cast(
+            "Agent[BioinformaticsAgentDeps, DataFusionResult]",
+            Agent(
+                model=resolved_model,
+                deps_type=BioinformaticsAgentDeps,
+                output_type=DataFusionResult,
+                system_prompt=system_prompt,
+            ),
         )
 
     async def fuse_data(
@@ -74,25 +78,28 @@ class DataFusionAgent:
         )
 
         result = await self.agent.run(fusion_prompt, deps=deps)
-        return result.data
+        return result.output
 
 
 class GOAnnotationAgent:
     """Agent for processing GO annotations with PubMed context."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, list[GOAnnotation]] = (
+            self._create_agent()
+        )
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Agent[BioinformaticsAgentDeps, list[GOAnnotation]]:
         """Create the GO annotation agent."""
-        model = AnthropicModel(self.model_name)
-
-        return Agent(
-            model=model,
-            deps_type=BioinformaticsAgentDeps,
-            output_type=list[GOAnnotation],
-            system_prompt=BioinformaticsAgentPrompts.GO_ANNOTATION_SYSTEM,
+        return cast(
+            "Agent[BioinformaticsAgentDeps, list[GOAnnotation]]",
+            Agent(
+                model=self.model_name,
+                deps_type=BioinformaticsAgentDeps,
+                output_type=list[GOAnnotation],
+                system_prompt=BioinformaticsAgentPrompts.GO_ANNOTATION_SYSTEM,
+            ),
         )
 
     async def process_annotations(
@@ -111,25 +118,28 @@ class GOAnnotationAgent:
         )
 
         result = await self.agent.run(processing_prompt, deps=deps)
-        return result.data
+        return result.output
 
 
 class ReasoningAgent:
     """Agent for performing reasoning tasks on fused bioinformatics data."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, ReasoningResult] = (
+            self._create_agent()
+        )
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Agent[BioinformaticsAgentDeps, ReasoningResult]:
         """Create the reasoning agent."""
-        model = AnthropicModel(self.model_name)
-
-        return Agent(
-            model=model,
-            deps_type=BioinformaticsAgentDeps,
-            output_type=ReasoningResult,
-            system_prompt=BioinformaticsAgentPrompts.REASONING_SYSTEM,
+        return cast(
+            "Agent[BioinformaticsAgentDeps, ReasoningResult]",
+            Agent(
+                model=self.model_name,
+                deps_type=BioinformaticsAgentDeps,
+                output_type=ReasoningResult,
+                system_prompt=BioinformaticsAgentPrompts.REASONING_SYSTEM,
+            ),
         )
 
     async def perform_reasoning(
@@ -153,25 +163,28 @@ class ReasoningAgent:
         )
 
         result = await self.agent.run(reasoning_prompt, deps=deps)
-        return result.data
+        return result.output
 
 
 class DataQualityAgent:
     """Agent for assessing data quality and consistency."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, dict[str, float]] = (
+            self._create_agent()
+        )
 
-    def _create_agent(self) -> Agent:
+    def _create_agent(self) -> Agent[BioinformaticsAgentDeps, dict[str, float]]:
         """Create the data quality agent."""
-        model = AnthropicModel(self.model_name)
-
-        return Agent(
-            model=model,
-            deps_type=BioinformaticsAgentDeps,
-            output_type=dict[str, float],
-            system_prompt=BioinformaticsAgentPrompts.DATA_QUALITY_SYSTEM,
+        return cast(
+            "Agent[BioinformaticsAgentDeps, dict[str, float]]",
+            Agent(
+                model=self.model_name,
+                deps_type=BioinformaticsAgentDeps,
+                output_type=dict[str, float],
+                system_prompt=BioinformaticsAgentPrompts.DATA_QUALITY_SYSTEM,
+            ),
         )
 
     async def assess_quality(
@@ -193,13 +206,13 @@ class DataQualityAgent:
         )
 
         result = await self.agent.run(quality_prompt, deps=deps)
-        return result.data
+        return result.output
 
 
 class BioinformaticsAgent:
     """Main bioinformatics agent that coordinates all bioinformatics operations."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
         self.orchestrator = AgentOrchestrator(model_name)
 
@@ -233,7 +246,7 @@ class BioinformaticsAgent:
 class AgentOrchestrator:
     """Orchestrator for coordinating multiple bioinformatics agents."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
         self.fusion_agent = DataFusionAgent(model_name)
         self.go_agent = GOAnnotationAgent(model_name)
@@ -253,7 +266,9 @@ class AgentOrchestrator:
             raise ValueError(msg)
 
         # Step 2: Construct dataset from fusion result
-        dataset = FusedDataset(**fusion_result.dataset)
+        if fusion_result.fused_dataset is None:
+            raise ValueError("Data fusion did not produce a fused dataset")
+        dataset = fusion_result.fused_dataset
 
         # Step 3: Assess data quality
         quality_metrics = await self.quality_agent.assess_quality(dataset, deps)

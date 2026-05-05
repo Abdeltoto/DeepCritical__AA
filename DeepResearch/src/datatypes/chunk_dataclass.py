@@ -107,8 +107,9 @@ class Chunk:
         result["context"] = self.context
         # Convert embedding to list if it has tolist method (numpy array)
         if self.embedding is not None:
-            if hasattr(self.embedding, "tolist"):
-                result["embedding"] = self.embedding.tolist()
+            to_list = getattr(self.embedding, "tolist", None)
+            if callable(to_list):
+                result["embedding"] = to_list()
             else:
                 result["embedding"] = self.embedding
         return result

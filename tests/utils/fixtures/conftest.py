@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from tests.utils.mocks.mock_data import create_test_directory_structure
 
 
@@ -59,7 +60,7 @@ def mock_llm_response():
 def mock_agent_dependencies():
     """Mock agent dependencies for testing."""
     return {
-        "model_name": "anthropic:claude-sonnet-4-0",
+        "model_name": DEFAULT_PYDANTIC_AI_MODEL,
         "temperature": 0.7,
         "max_tokens": 100,
         "timeout": 30,

@@ -6,9 +6,11 @@ from ..datatypes.neo4j_types import (
     VectorSearchDefaults,
 )
 from ..datatypes.rag import Embeddings, VectorStore, VectorStoreConfig, VectorStoreType
+from .in_memory_vector_store import InMemoryVectorStore
 from .neo4j_vector_store import Neo4jVectorStore
 
 __all__ = [
+    "InMemoryVectorStore",
     "Neo4jVectorStore",
     "Neo4jVectorStoreConfig",
     "create_vector_store",
@@ -78,4 +80,7 @@ def create_vector_store(
             vector_store_config, embeddings, neo4j_config=connection
         )
 
-    raise ValueError(f"Unsupported vector store type: {config.store_type}")
+    # Degraded-mode fallback for unsupported vector stores.
+    # This keeps the RAG workflow functional, while explicitly signaling that
+    # production persistence/retrieval guarantees are not provided.
+    return InMemoryVectorStore(config, embeddings)

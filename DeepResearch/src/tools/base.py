@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+from .registry import (
+    CanonicalExecutionResult,
+    CanonicalTool,
+    CanonicalToolSpec,
+    ToolCollisionError,
+    ToolNotFoundError,
+    canonical_registry,
+)
 
 
 @dataclass
@@ -43,21 +54,75 @@ class ToolRunner:
         raise NotImplementedError
 
 
+class _CanonicalToolAdapter(CanonicalTool):
+    """Adapt legacy ToolRunner factories to the canonical tool interface."""
+
+    def __init__(self, runner_factory: Callable[[], ToolRunner]):
+        self._factory = runner_factory
+        runner = runner_factory()
+        self._runner = runner
+        self.spec = CanonicalToolSpec(
+            name=runner.spec.name,
+            description=runner.spec.description,
+            inputs=dict(runner.spec.inputs),
+            outputs=dict(runner.spec.outputs),
+        )
+
+    def validate(self, params: dict[str, Any]) -> tuple[bool, str | None]:
+        return self._runner.validate(params)
+
+    def run(self, params: dict[str, Any]) -> CanonicalExecutionResult:
+        res = self._runner.run(params)
+        return CanonicalExecutionResult(
+            success=res.success,
+            data=dict(res.data),
+            error=res.error,
+            metrics=dict(res.metrics),
+        )
+
+    async def arun(self, params: dict[str, Any]) -> CanonicalExecutionResult:
+        runner = self._runner
+        runner_any: Any = runner
+        if inspect.iscoroutinefunction(getattr(runner_any, "_arun", None)):
+            res = await runner_any._arun(params)
+        elif inspect.iscoroutinefunction(getattr(runner_any, "arun", None)):
+            res = await runner_any.arun(params)
+        else:
+            res = await asyncio.to_thread(runner.run, params)
+        return CanonicalExecutionResult(
+            success=res.success,
+            data=dict(res.data),
+            error=res.error,
+            metrics=dict(res.metrics),
+        )
+
+
 class ToolRegistry:
-    def __init__(self):
-        self._tools: dict[str, Callable[[], ToolRunner]] = {}
+    """Backward-compatible registry facade over the canonical registry."""
 
     def register(self, name: str, factory: Callable[[], ToolRunner]):
-        self._tools[name] = factory
+        # Register into canonical registry; preserve legacy behavior by allowing
+        # explicit override only when the caller passes override=True via canonical.
+        canonical_registry.register(
+            name,
+            lambda: _CanonicalToolAdapter(factory),
+            override=False,
+        )
 
     def make(self, name: str) -> ToolRunner:
-        if name not in self._tools:
-            msg = f"Tool not found: {name}"
-            raise KeyError(msg)
-        return self._tools[name]()
+        try:
+            canonical_tool = canonical_registry.make(name)
+        except ToolNotFoundError as e:
+            raise KeyError(str(e)) from e
+
+        # Return the underlying ToolRunner when available.
+        if isinstance(canonical_tool, _CanonicalToolAdapter):
+            return canonical_tool._runner
+        msg = f"Tool '{name}' is not a legacy ToolRunner"
+        raise KeyError(msg)
 
     def list(self):
-        return list(self._tools.keys())
+        return canonical_registry.list_tools()
 
 
 registry = ToolRegistry()

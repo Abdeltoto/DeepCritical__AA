@@ -11,35 +11,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
-# Optional import for pydantic_graph
-try:
-    from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
-except ImportError:
-    # Create placeholder classes for when pydantic_graph is not available
-    from typing import Generic, TypeVar
-
-    T = TypeVar("T")
-
-    class BaseNode(Generic[T]):
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class End:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class Graph:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class GraphRunContext:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class Edge:
-        def __init__(self, *args, **kwargs):
-            pass
-
+from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
 
 from DeepResearch.src.datatypes.bioinformatics import (
     DataFusionRequest,
@@ -77,7 +49,7 @@ class BioinformaticsState:
 
 
 @dataclass
-class ParseBioinformaticsQuery(BaseNode[BioinformaticsState]):  # type: ignore[unsupported-base]
+class ParseBioinformaticsQuery(BaseNode[BioinformaticsState, None, str]):
     """Parse bioinformatics query and determine workflow type."""
 
     async def run(self, ctx: GraphRunContext[BioinformaticsState]) -> FuseDataSources:
@@ -194,7 +166,7 @@ class ParseBioinformaticsQuery(BaseNode[BioinformaticsState]):  # type: ignore[u
 
 
 @dataclass
-class FuseDataSources(BaseNode[BioinformaticsState]):  # type: ignore[unsupported-base]
+class FuseDataSources(BaseNode[BioinformaticsState, None, str]):
     """Fuse data from multiple bioinformatics sources."""
 
     async def run(self, ctx: GraphRunContext[BioinformaticsState]) -> AssessDataQuality:
@@ -239,7 +211,7 @@ class FuseDataSources(BaseNode[BioinformaticsState]):  # type: ignore[unsupporte
 
 
 @dataclass
-class AssessDataQuality(BaseNode[BioinformaticsState]):  # type: ignore[unsupported-base]
+class AssessDataQuality(BaseNode[BioinformaticsState, None, str]):
     """Assess quality of fused dataset."""
 
     async def run(
@@ -274,7 +246,7 @@ class AssessDataQuality(BaseNode[BioinformaticsState]):  # type: ignore[unsuppor
 
 
 @dataclass
-class CreateReasoningTask(BaseNode[BioinformaticsState]):  # type: ignore[unsupported-base]
+class CreateReasoningTask(BaseNode[BioinformaticsState, None, str]):
     """Create reasoning task based on original question and fused data."""
 
     async def run(self, ctx: GraphRunContext[BioinformaticsState]) -> PerformReasoning:
@@ -351,7 +323,7 @@ class CreateReasoningTask(BaseNode[BioinformaticsState]):  # type: ignore[unsupp
 
 
 @dataclass
-class PerformReasoning(BaseNode[BioinformaticsState]):  # type: ignore[unsupported-base]
+class PerformReasoning(BaseNode[BioinformaticsState, None, str]):
     """Perform integrative reasoning using fused bioinformatics data."""
 
     async def run(self, ctx: GraphRunContext[BioinformaticsState]) -> SynthesizeResults:
@@ -401,7 +373,7 @@ class PerformReasoning(BaseNode[BioinformaticsState]):  # type: ignore[unsupport
 
 
 @dataclass
-class SynthesizeResults(BaseNode[BioinformaticsState]):  # type: ignore[unsupported-base]
+class SynthesizeResults(BaseNode[BioinformaticsState, None, str]):
     """Synthesize final results from reasoning and data fusion."""
 
     async def run(
@@ -487,14 +459,15 @@ class SynthesizeResults(BaseNode[BioinformaticsState]):  # type: ignore[unsuppor
 # Create the bioinformatics workflow graph
 bioinformatics_workflow = Graph(
     nodes=(
-        ParseBioinformaticsQuery(),
-        FuseDataSources(),
-        AssessDataQuality(),
-        CreateReasoningTask(),
-        PerformReasoning(),
-        SynthesizeResults(),
+        ParseBioinformaticsQuery,
+        FuseDataSources,
+        AssessDataQuality,
+        CreateReasoningTask,
+        PerformReasoning,
+        SynthesizeResults,
     ),
     state_type=BioinformaticsState,
+    run_end_type=str,
 )
 
 
@@ -505,7 +478,5 @@ def run_bioinformatics_workflow(
 
     state = BioinformaticsState(question=question, config=config or {})
 
-    result = asyncio.run(
-        bioinformatics_workflow.run(ParseBioinformaticsQuery(), state=state)  # type: ignore
-    )
-    return result.output or ""
+    asyncio.run(bioinformatics_workflow.run(ParseBioinformaticsQuery(), state=state))
+    return state.final_answer

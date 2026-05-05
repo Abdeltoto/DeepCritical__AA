@@ -70,14 +70,17 @@ class SearchAgent:
             processing_time = None
             analytics_recorded = False
 
-            # Check if the result contains processing information
-            if hasattr(result, "data") and isinstance(result.data, dict):
-                processing_time = result.data.get("processing_time")
-                analytics_recorded = result.data.get("analytics_recorded", False)
+            output: Any = getattr(result, "output", result)
+            if isinstance(output, dict):
+                processing_time = output.get("processing_time")
+                analytics_recorded = bool(output.get("analytics_recorded", False))
+                content = str(output.get("content", output))
+            else:
+                content = str(output)
 
             return SearchResult(
                 query=query.query,
-                content=result.data if hasattr(result, "data") else str(result),
+                content=content,
                 success=True,
                 processing_time=processing_time,
                 analytics_recorded=analytics_recorded,
@@ -94,7 +97,8 @@ class SearchAgent:
             deps = {"days": days}
             user_message = SearchAgentPrompts.get_analytics_request_prompt(days)
             result = await self.agent.run(user_message, deps=deps)
-            return result.data if hasattr(result, "data") else {}
+            output: Any = getattr(result, "output", None)
+            return output if isinstance(output, dict) else {}
         except Exception as e:
             return {"error": str(e)}
 

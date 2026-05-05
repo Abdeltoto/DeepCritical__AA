@@ -12,7 +12,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, MutableSequence
 from enum import Enum
-from typing import Any, ClassVar, Generic, TypeAlias, TypeVar
+from typing import Any, ClassVar, Generic, TypeAlias, TypeVar, cast
 
 __all__ = [
     "AgentMiddleware",
@@ -516,22 +516,19 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
 def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     """Decorator to mark a function as agent middleware."""
-    # Add marker attribute to identify this as agent middleware
-    func._middleware_type = MiddlewareType.AGENT
+    cast("Any", func)._middleware_type = MiddlewareType.AGENT
     return func
 
 
 def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareCallable:
     """Decorator to mark a function as function middleware."""
-    # Add marker attribute to identify this as function middleware
-    func._middleware_type = MiddlewareType.FUNCTION
+    cast("Any", func)._middleware_type = MiddlewareType.FUNCTION
     return func
 
 
 def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
     """Decorator to mark a function as chat middleware."""
-    # Add marker attribute to identify this as chat middleware
-    func._middleware_type = MiddlewareType.CHAT
+    cast("Any", func)._middleware_type = MiddlewareType.CHAT
     return func
 
 
@@ -590,9 +587,10 @@ def create_function_middleware_pipeline(
 # Decorator for adding middleware support to agent classes
 def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
     """Class decorator that adds middleware support to an agent class."""
+    ac = cast("Any", agent_class)
     # Store original methods
-    original_run = agent_class.run
-    original_run_stream = agent_class.run_stream
+    original_run = ac.run
+    original_run_stream = ac.run_stream
 
     async def middleware_enabled_run(
         self: Any,
@@ -700,17 +698,18 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         # No middleware, execute directly
         return original_run_stream(self, normalized_messages, thread=thread, **kwargs)
 
-    agent_class.run = middleware_enabled_run
-    agent_class.run_stream = middleware_enabled_run_stream
+    ac.run = middleware_enabled_run
+    ac.run_stream = middleware_enabled_run_stream
 
     return agent_class
 
 
 def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClient]:
     """Class decorator that adds middleware support to a chat client class."""
+    cc = cast("Any", chat_client_class)
     # Store original methods
-    original_get_response = chat_client_class.get_response
-    original_get_streaming_response = chat_client_class.get_streaming_response
+    original_get_response = cc.get_response
+    original_get_streaming_response = cc.get_streaming_response
 
     async def middleware_enabled_get_response(
         self: Any,
@@ -829,8 +828,8 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         return _stream_generator()
 
     # Replace methods
-    chat_client_class.get_response = middleware_enabled_get_response
-    chat_client_class.get_streaming_response = middleware_enabled_get_streaming_response
+    cc.get_response = middleware_enabled_get_response
+    cc.get_streaming_response = middleware_enabled_get_streaming_response
 
     return chat_client_class
 

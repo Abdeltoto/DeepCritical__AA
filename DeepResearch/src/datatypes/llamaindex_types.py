@@ -10,7 +10,7 @@ LlamaIndex dependency.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 from pydantic import BaseModel, Field
 
@@ -66,10 +66,17 @@ class TextNode(BaseNode):
     @classmethod
     def from_chunk(cls, chunk: Chunk) -> TextNode:
         """Create TextNode from DeepCritical Chunk."""
+        embedding = chunk.embedding
+        to_list = getattr(embedding, "tolist", None)
+        if callable(to_list):
+            embedding = to_list()
+        if embedding is not None and not isinstance(embedding, list):
+            embedding = None
+        embedding = cast("list[float] | None", embedding)
         return cls(
             id_=chunk.id,
             text=chunk.text,
-            embedding=chunk.embedding,
+            embedding=embedding,
             metadata={
                 "start_index": chunk.start_index,
                 "end_index": chunk.end_index,

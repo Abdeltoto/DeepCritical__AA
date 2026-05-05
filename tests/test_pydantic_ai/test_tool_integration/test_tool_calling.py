@@ -8,6 +8,8 @@ from unittest.mock import Mock
 import pytest
 from pydantic_ai import Agent, RunContext
 
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class TestPydanticAIToolCalling:
     """Test Pydantic AI tool calling functionality."""
@@ -42,7 +44,7 @@ class TestPydanticAIToolCalling:
         """Test tool execution with dependency injection."""
         # Mock agent dependencies
         deps = {
-            "model_name": "anthropic:claude-sonnet-4-0",
+            "model_name": DEFAULT_PYDANTIC_AI_MODEL,
             "temperature": 0.7,
             "max_tokens": 1000,
         }

@@ -14,6 +14,7 @@ from pydantic_ai import Agent
 
 from DeepResearch.src.datatypes.agents import AgentResult, AgentType
 from DeepResearch.src.datatypes.coding_base import CodeBlock
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.code_exec import CodeExecPrompts
 from DeepResearch.src.utils.code_utils import infer_lang
 
@@ -23,7 +24,7 @@ class CodeImprovementAgent:
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         max_improvement_attempts: int = 3,
         timeout: float = 60.0,
     ):
@@ -189,7 +190,7 @@ Provide a detailed analysis of what went wrong and how to fix it.
 """
 
         result = await self.analysis_agent.run(analysis_prompt)
-        analysis_response = str(result.data).strip()
+        analysis_response = str(result.output).strip()
 
         # Parse the structured response
         analysis = self._parse_analysis_response(analysis_response)
@@ -242,7 +243,7 @@ Provide a detailed analysis of what went wrong and how to fix it.
             agent = self.improvement_agent
 
         result = await agent.run(improvement_prompt)
-        improvement_response = str(result.data).strip()
+        improvement_response = str(result.output).strip()
 
         # Parse the improvement response
         improved_code = self._extract_improved_code(improvement_response)

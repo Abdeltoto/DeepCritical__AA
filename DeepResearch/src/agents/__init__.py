@@ -1,9 +1,5 @@
 from DeepResearch.src.datatypes.execution import ExecutionContext
 from DeepResearch.src.datatypes.research import ResearchOutcome, StepResult
-from DeepResearch.src.utils.testcontainers_deployer import (
-    TestcontainersDeployer,
-    testcontainers_deployer,
-)
 
 from .agent_orchestrator import AgentOrchestrator
 from .code_execution_orchestrator import (
@@ -94,3 +90,20 @@ __all__ = [
     "run_code_execution_agent",
     "testcontainers_deployer",
 ]
+
+
+def __getattr__(name: str):
+    # Avoid import-time side effects (testcontainers pulls in heavy MCP server code).
+    if name in {"TestcontainersDeployer", "testcontainers_deployer"}:
+        from DeepResearch.src.utils.testcontainers_deployer import (
+            TestcontainersDeployer,
+            testcontainers_deployer,
+        )
+
+        return {
+            "TestcontainersDeployer": TestcontainersDeployer,
+            "testcontainers_deployer": testcontainers_deployer,
+        }[name]
+
+    msg = f"module '{__name__}' has no attribute '{name}'"
+    raise AttributeError(msg)

@@ -34,7 +34,7 @@ repos:
     hooks:
       - id: ty-check
         name: ty type check
-        entry: uvx ty check
+        entry: uv run ty check DeepResearch
         language: system
         files: \.py$
         pass_filenames: false

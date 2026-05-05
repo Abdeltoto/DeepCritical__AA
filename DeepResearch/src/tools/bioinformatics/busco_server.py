@@ -26,6 +26,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerType,
     MCPToolSpec,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class BUSCOServer(MCPServerBase):
@@ -88,12 +91,9 @@ class BUSCOServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if busco is available (for testing/development environments)
-            import shutil
-
-            if not shutil.which("busco"):
-                # Return mock success result for testing when busco is not available
-                return {
+            miss = response_if_executable_missing(
+                "busco",
+                {
                     "success": True,
                     "command_executed": f"busco {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
@@ -102,8 +102,11 @@ class BUSCOServer(MCPServerBase):
                         method_params.get("output_dir", f"mock_{operation}_output")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             return method(**method_params)

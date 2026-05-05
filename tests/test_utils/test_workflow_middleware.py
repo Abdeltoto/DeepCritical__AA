@@ -299,8 +299,11 @@ class TestWorkflowMiddleware:
         agent_pipeline._register_middleware(faulty_agent_mw)
         context = AgentRunContext(agent="agentX", messages=[])
 
+        async def _final_agent(_ctx: AgentRunContext):
+            return "final"
+
         with pytest.raises(ValueError, match="agent error") as excinfo:
-            await agent_pipeline.execute("agentX", [], context, lambda ctx: "final")
+            await agent_pipeline.execute("agentX", [], context, _final_agent)
         assert str(excinfo.value) == "agent error"
 
         # Function pipeline exception handling
@@ -312,10 +315,11 @@ class TestWorkflowMiddleware:
         func_pipeline._register_middleware(faulty_func_mw)
         func_context = FunctionInvocationContext(function=lambda x: x, arguments=[1])
 
+        async def _final_func(_ctx: FunctionInvocationContext):
+            return "final"
+
         with pytest.raises(RuntimeError) as excinfo2:
-            await func_pipeline.execute(
-                lambda x: x, [1], func_context, lambda ctx: "final"
-            )
+            await func_pipeline.execute(lambda x: x, [1], func_context, _final_func)
         assert str(excinfo2.value) == "function error"
 
         # Chat pipeline exception handling
@@ -327,10 +331,11 @@ class TestWorkflowMiddleware:
         chat_pipeline._register_middleware(faulty_chat_mw)
         chat_context = ChatContext(chat_client="clientX", messages=[], chat_options={})
 
+        async def _final_chat(_ctx: ChatContext):
+            return "final"
+
         with pytest.raises(KeyError) as excinfo3:
-            await chat_pipeline.execute(
-                "clientX", [], {}, chat_context, lambda ctx: "final"
-            )
+            await chat_pipeline.execute("clientX", [], {}, chat_context, _final_chat)
         assert str(excinfo3.value) == "'chat error'"
 
     """Unit tests for middleware decorator functions."""
@@ -687,16 +692,16 @@ class TestWorkflowMiddleware:
         # ----- Middleware class instances -----
 
         class DummyAgentMiddleware(AgentMiddleware):
-            async def process(self, context, next_fn):
-                return await next_fn(context)
+            async def process(self, context, next):
+                return await next(context)
 
         class DummyFunctionMiddleware(FunctionMiddleware):
-            async def process(self, context, next_fn):
-                return await next_fn(context)
+            async def process(self, context, next):
+                return await next(context)
 
         class DummyChatMiddleware(ChatMiddleware):
-            async def process(self, context, next_fn):
-                return await next_fn(context)
+            async def process(self, context, next):
+                return await next(context)
 
         agent_instance = DummyAgentMiddleware()
         func_instance = DummyFunctionMiddleware()

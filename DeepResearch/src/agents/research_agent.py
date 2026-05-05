@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 try:
-    from pydantic_ai import Agent  # type: ignore
+    from pydantic_ai import Agent
 except Exception:  # pragma: no cover
     Agent = None  # type: ignore
 
@@ -85,9 +85,11 @@ def _compose_agent_system(
 
 
 def _ensure_core_agent(cfg: DictConfig):
-    builtin = _build_builtin_tools(dict(cfg) if cfg else {})
-    toolsets = _build_toolsets(dict(cfg) if cfg else {})
-    agent, _ = _build_core_agent(dict(cfg) if cfg else {}, builtin, toolsets)
+    raw = dict(cfg) if cfg else {}
+    cfg_dict: dict[str, Any] = {str(k): v for k, v in raw.items()}
+    builtin = _build_builtin_tools(cfg_dict)
+    toolsets = _build_toolsets(cfg_dict)
+    agent, _ = _build_core_agent(cfg_dict, builtin, toolsets)
     return agent
 
 

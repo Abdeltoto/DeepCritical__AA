@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerDeployment,
     MCPServerStatus,
     MCPServerType,
+)
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
 )
 
 
@@ -103,13 +107,10 @@ class KallistoServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if tool is available (for testing/development environments)
-            import shutil
-
             tool_name_check = "kallisto"
-            if not shutil.which(tool_name_check):
-                # Return mock success result for testing when tool is not available
-                return {
+            miss = response_if_executable_missing(
+                tool_name_check,
+                {
                     "success": True,
                     "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
@@ -118,11 +119,21 @@ class KallistoServer(MCPServerBase):
                         method_params.get("output_file", f"mock_{operation}_output")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
-            # Call the appropriate method
-            return method(**method_params)
+            result = method(**method_params)
+            if inspect.isawaitable(result):
+                return {
+                    "success": False,
+                    "error": f"Operation {operation} produced an awaitable but run() is synchronous; use an async entrypoint.",
+                }
+            if isinstance(result, dict):
+                return result
+            return {"success": True, "result": result}
         except Exception as e:
             return {
                 "success": False,

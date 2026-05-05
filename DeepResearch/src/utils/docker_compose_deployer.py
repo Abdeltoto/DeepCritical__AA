@@ -5,8 +5,6 @@ This module provides deployment functionality for MCP servers using Docker Compo
 for production-like deployments, now integrated with AG2-style code execution.
 """
 
-# type: ignore  # Template file with dynamic variable substitution
-
 from __future__ import annotations
 
 import logging
@@ -210,7 +208,7 @@ class DockerComposeDeployer:
                         )
 
                         if result.returncode == 0:
-                            deployment.status = "stopped"
+                            deployment.status = MCPServerStatus.STOPPED
                             logger.info("Stopped MCP server '%s'", server_name)
                         else:
                             logger.error(
@@ -256,7 +254,7 @@ class DockerComposeDeployer:
                         )
 
                         if result.returncode == 0:
-                            deployment.status = "stopped"
+                            deployment.status = MCPServerStatus.STOPPED
                             del self.deployments[server_name]
                             del self.compose_files[server_name]
                             logger.info("Removed MCP server '%s'", server_name)
@@ -567,9 +565,11 @@ mcp_server = {class_name}()
         if server_name not in self.code_executors:
             # Create code executor if it doesn't exist
             self.code_executors[server_name] = DockerCommandLineCodeExecutor(
-                image=deployment.configuration.image
-                if hasattr(deployment.configuration, "image")
-                else "python:3.11-slim",
+                image=str(
+                    deployment.configuration.image
+                    if hasattr(deployment.configuration, "image")
+                    else "python:3.11-slim"
+                ),
                 timeout=kwargs.get("timeout", 60),
                 work_dir=f"/tmp/{server_name}_code_blocks_compose",
             )

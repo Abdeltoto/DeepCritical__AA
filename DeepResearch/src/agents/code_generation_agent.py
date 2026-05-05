@@ -7,7 +7,7 @@ using the vendored AG2 code execution framework for execution.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pydantic_ai import Agent
 
@@ -19,6 +19,7 @@ from DeepResearch.src.datatypes.agent_framework_types import (
 )
 from DeepResearch.src.datatypes.agents import AgentDependencies, AgentResult, AgentType
 from DeepResearch.src.datatypes.coding_base import CodeBlock
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.code_exec import CodeExecPrompts
 from DeepResearch.src.prompts.code_sandbox import CodeSandboxPrompts
 
@@ -28,7 +29,7 @@ class CodeGenerationAgent:
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         max_retries: int = 3,
         timeout: float = 60.0,
     ):
@@ -189,7 +190,7 @@ class CodeGenerationAgent:
         result = await self.bash_agent.run(
             f"Generate a bash command for: {description}"
         )
-        return str(result.data).strip()
+        return str(result.output).strip()
 
     async def generate_python_code(self, description: str) -> str:
         """Generate Python code from natural language description.
@@ -201,7 +202,7 @@ class CodeGenerationAgent:
             Generated Python code as string
         """
         result = await self.python_agent.run(f"Generate Python code for: {description}")
-        return str(result.data).strip()
+        return str(result.output).strip()
 
     async def generate_code(
         self, description: str, code_type: str | None = None
@@ -225,7 +226,7 @@ class CodeGenerationAgent:
         result = await self.universal_agent.run(
             f"Analyze and generate code for: {description}"
         )
-        response = str(result.data).strip()
+        response = str(result.output).strip()
 
         # Parse response format: TYPE: [BASH|PYTHON]\nCODE: [code]
         lines = response.split("\n", 2)
@@ -292,7 +293,7 @@ class CodeExecutionAgent:
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         use_docker: bool = True,
         use_jupyter: bool = False,
         jupyter_config: dict[str, Any] | None = None,
@@ -424,7 +425,7 @@ class CodeExecutionAgentSystem:
 
     def __init__(
         self,
-        generation_model: str = "anthropic:claude-sonnet-4-0",
+        generation_model: str = DEFAULT_PYDANTIC_AI_MODEL,
         execution_config: dict[str, Any] | None = None,
     ):
         """Initialize the complete code execution agent system.
@@ -444,12 +445,21 @@ class CodeExecutionAgentSystem:
         # Initialize agents
         self.generation_agent = CodeGenerationAgent(
             model_name=generation_model,
-            max_retries=self.execution_config.get("max_retries", 3),
-            timeout=self.execution_config.get("timeout", 60.0),
+            max_retries=int(self.execution_config.get("max_retries", 3)),
+            timeout=float(self.execution_config.get("timeout", 60.0)),
         )
 
         self.execution_agent = CodeExecutionAgent(
-            model_name=generation_model, **self.execution_config
+            model_name=generation_model,
+            use_docker=bool(self.execution_config.get("use_docker", True)),
+            use_jupyter=bool(self.execution_config.get("use_jupyter", False)),
+            jupyter_config=(
+                cast("dict[str, Any]", self.execution_config["jupyter_config"])
+                if isinstance(self.execution_config.get("jupyter_config"), dict)
+                else None
+            ),
+            max_retries=int(self.execution_config.get("max_retries", 3)),
+            timeout=float(self.execution_config.get("timeout", 60.0)),
         )
 
     async def process_request(

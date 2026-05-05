@@ -8,9 +8,10 @@ including similarity search, hybrid search, and filtered search capabilities.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, cast
 
 from neo4j import GraphDatabase
+from typing_extensions import LiteralString
 
 from ..datatypes.neo4j_types import Neo4jConnectionConfig, Neo4jVectorStoreConfig
 from ..datatypes.rag import Embeddings as EmbeddingsInterface
@@ -318,12 +319,17 @@ class Neo4jVectorSearch:
                 stats["index_info"] = {"error": str(e)}
 
             # Get data statistics
-            result = session.run(f"""
+            result = session.run(
+                cast(
+                    "LiteralString",
+                    f"""
                 MATCH (n:{self.config.index.node_label})
                 WHERE n.{self.config.index.vector_property} IS NOT NULL
                 RETURN count(n) AS nodes_with_vectors,
                        avg(size(n.{self.config.index.vector_property})) AS avg_vector_size
-            """)
+            """,
+                )
+            )
 
             record = result.single()
             if record:
@@ -379,10 +385,10 @@ class Neo4jVectorSearch:
                     if test_results:
                         validation["search_works"] = True
                 except Exception as e:
-                    validation["errors"].append(f"Search test failed: {e}")  # type: ignore
+                    validation["errors"].append(f"Search test failed: {e}")
 
         except Exception as e:
-            validation["errors"].append(f"Validation failed: {e}")  # type: ignore
+            validation["errors"].append(f"Validation failed: {e}")
 
         # Print validation results
         print("Validation Results:")
@@ -393,7 +399,7 @@ class Neo4jVectorSearch:
 
         if validation["errors"]:
             print("Errors:")
-            for error in validation["errors"]:  # type: ignore
+            for error in validation["errors"]:
                 print(f"  - {error}")
 
         return validation

@@ -11,6 +11,8 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class BioinformaticsConfigLoader:
     """Loader for bioinformatics configurations."""
@@ -25,7 +27,9 @@ class BioinformaticsConfigLoader:
         result = OmegaConf.to_container(
             self.config.get("bioinformatics", {}), resolve=True
         )
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            return {}
+        return {str(k): v for k, v in result.items()}
 
     def get_model_config(self) -> dict[str, Any]:
         """Get model configuration."""
@@ -90,7 +94,7 @@ class BioinformaticsConfigLoader:
     def get_default_model(self) -> str:
         """Get default model name."""
         model_config = self.get_model_config()
-        return model_config.get("default", "anthropic:claude-sonnet-4-0")
+        return model_config.get("default", DEFAULT_PYDANTIC_AI_MODEL)
 
     def get_default_quality_threshold(self) -> float:
         """Get default quality threshold."""

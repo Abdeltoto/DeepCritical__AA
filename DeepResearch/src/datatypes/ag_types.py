@@ -5,7 +5,7 @@ This module provides type definitions adapted from AG2 for use in DeepCritical's
 code execution and content processing capabilities.
 """
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 # Message content types for compatibility with AG2
 MessageContentType = str | list[dict[str, Any] | str] | None
@@ -70,13 +70,15 @@ def content_str(
             "Wrong content format. Missing 'type' key in content's dict."
         )
         if item["type"] in ["text", "input_text"]:
-            rst.append(item["text"])
+            if "text" in item:
+                rst.append(cast("Any", item).get("text", ""))
+            else:
+                rst.append("")
         elif item["type"] in ["image_url", "input_image"]:
             rst.append("<image>")
         elif item["type"] in ["function", "tool_call", "tool_calls"]:
-            rst.append(
-                "<function>" if "name" not in item else f"<function: {item['name']}>"
-            )
+            name = cast("Any", item).get("name")
+            rst.append("<function>" if not name else f"<function: {name}>")
         else:
             raise ValueError(
                 f"Wrong content format: unknown type {item['type']} within the content"

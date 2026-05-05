@@ -202,17 +202,10 @@ jobs:
     - name: Set up uv
       uses: astral-sh/setup-uv@v5
 
-    - name: Create venv and install deps
-      run: |
-        python -m venv .venv
-        source .venv/bin/activate
-        python -m pip install --upgrade pip
-        pip install -e .
-        pip install -e ".[dev]"
+    - name: Install deps (locked; includes ty from dev group)
+      run: uv sync --group dev --frozen
 
     - name: Run ty type check
-      env:
-        VIRTUAL_ENV: .venv
       run: |
-        uvx ty --version
-        uvx ty check
+        uv run ty --version
+        uv run ty check

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import field
 from datetime import datetime
 from typing import Any
 
@@ -43,45 +42,52 @@ class MultiAgentCoordinator:
     def __init__(self, system_config: MultiAgentSystemConfig):
         self.system_config = system_config
         self.agents: dict[str, Agent] = {}
-        self.judges: dict[str, Any] = field(default_factory=dict)
-        self.message_queue: list[CoordinationMessage] = field(default_factory=list)
-        self.coordination_history: list[CoordinationRound] = field(default_factory=list)
-
-    def __post_init__(self):
-        """Initialize the coordinator."""
+        self.judges: dict[str, Any] = {}
+        self.message_queue: list[CoordinationMessage] = []
+        self.coordination_history: list[CoordinationRound] = []
         self.initialize_agents()
         self._create_judges()
+
+    def _resolve_strategy(self) -> CoordinationStrategy:
+        """Normalize config strategy string to CoordinationStrategy."""
+        raw = (
+            (self.system_config.coordination_strategy or "collaborative")
+            .strip()
+            .lower()
+        )
+        try:
+            return CoordinationStrategy(raw)
+        except ValueError:
+            return CoordinationStrategy.COLLABORATIVE
 
     def initialize_agents(self) -> None:
         """Create agent instances."""
         for agent_config in self.system_config.agents:
             if agent_config.enabled:
+                instr = self._get_default_instructions(agent_config.role)
+                instr_str = "\n".join(instr) if isinstance(instr, list) else str(instr)
                 agent = Agent(
                     model=agent_config.model_name,
                     system_prompt=agent_config.system_prompt
                     or self._get_default_system_prompt(agent_config.role),
-                    instructions=self._get_default_instructions(agent_config.role),
+                    instructions=instr_str,
                 )
                 self._register_agent_tools(agent, agent_config)
                 self.agents[agent_config.agent_id] = agent
 
     def _create_judges(self):
-        """Create judge instances."""
-        # This would create actual judge instances
-        # For now, we'll use placeholder judges
-        self.judges = {
-            "quality_judge": None,
-            "consensus_judge": None,
-            "coordination_judge": None,
-        }
+        """Reserved for explicit judge wiring (orchestrator handles LLM judges)."""
+        self.judges = {}
 
-    def _get_default_system_prompt(self, role: AgentRole) -> str:
+    def _get_default_system_prompt(self, role: Any) -> str:
         """Get default system prompt for an agent role."""
-        return get_system_prompt(role.value)
+        role_value = getattr(role, "value", role)
+        return get_system_prompt(str(role_value))
 
-    def _get_default_instructions(self, role: AgentRole) -> list[str]:
+    def _get_default_instructions(self, role: Any) -> list[str]:
         """Get default instructions for an agent role."""
-        return get_instructions(role.value)
+        role_value = getattr(role, "value", role)
+        return get_instructions(str(role_value))
 
     def _register_agent_tools(self, agent: Agent, agent_config: AgentConfig):
         """Register tools for an agent."""
@@ -139,6 +145,57 @@ class MultiAgentCoordinator:
             # This would implement consensus building
             return {"topic": topic, "consensus": "placeholder", "score": 0.8}
 
+        self._maybe_register_hypothesis_tools(agent, agent_config)
+
+    def _maybe_register_hypothesis_tools(
+        self, agent: Agent, agent_config: AgentConfig
+    ) -> None:
+        """Register evidence-grounded hypothesis generation for generator role."""
+        role_v = (
+            agent_config.role.value
+            if hasattr(agent_config.role, "value")
+            else str(agent_config.role)
+        )
+        if role_v != "hypothesis_generator":
+            return
+
+        system_id = self.system_config.system_id
+
+        @agent.tool
+        async def generate_hypotheses_from_evidence(
+            ctx: RunContext,
+            research_question: str,
+            max_hypotheses: int = 8,
+        ) -> dict[str, Any]:
+            """Retrieve web evidence and propose structured, testable hypotheses."""
+            from DeepResearch.src.agents.hypothesis_generation_agent import (
+                run_hypothesis_generation_pipeline,
+            )
+
+            params = {
+                "max_hypotheses": max_hypotheses,
+                "model_name": agent_config.model_name,
+            }
+            input_data: dict[str, Any] = {
+                "question": research_question,
+                "workflow_name": system_id,
+                "dataset_name": f"hypotheses_{system_id}",
+                "dataset_description": research_question[:500],
+            }
+            try:
+                dataset, meta = await run_hypothesis_generation_pipeline(
+                    input_data,
+                    params,
+                    default_model=agent_config.model_name,
+                )
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+            return {
+                "success": True,
+                "hypothesis_dataset": dataset.model_dump(),
+                "metadata": meta,
+            }
+
     async def coordinate(
         self,
         task_description: str,
@@ -160,71 +217,45 @@ class MultiAgentCoordinator:
                 )
 
             # Execute coordination strategy
-            if (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.COLLABORATIVE
-            ):
+            strategy = self._resolve_strategy()
+            if strategy == CoordinationStrategy.COLLABORATIVE:
                 result = await self._coordinate_collaborative(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.SEQUENTIAL
-            ):
+            elif strategy == CoordinationStrategy.SEQUENTIAL:
                 result = await self._coordinate_sequential(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.HIERARCHICAL
-            ):
+            elif strategy == CoordinationStrategy.HIERARCHICAL:
                 result = await self._coordinate_hierarchical(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.PEER_TO_PEER
-            ):
+            elif strategy == CoordinationStrategy.PEER_TO_PEER:
                 result = await self._coordinate_peer_to_peer(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.PIPELINE
-            ):
+            elif strategy == CoordinationStrategy.PIPELINE:
                 result = await self._coordinate_pipeline(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.CONSENSUS
-            ):
+            elif strategy == CoordinationStrategy.CONSENSUS:
                 result = await self._coordinate_consensus(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.GROUP_CHAT
-            ):
+            elif strategy == CoordinationStrategy.GROUP_CHAT:
                 result = await self._coordinate_group_chat(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.STATE_MACHINE_ENTRY
-            ):
+            elif strategy == CoordinationStrategy.STATE_MACHINE_ENTRY:
                 result = await self._coordinate_state_machine_entry(
                     coordination_id, task_description, agent_states, max_rounds
                 )
-            elif (
-                self.system_config.coordination_strategy
-                == CoordinationStrategy.SUBGRAPH_COORDINATION
-            ):
+            elif strategy == CoordinationStrategy.SUBGRAPH_COORDINATION:
                 result = await self._coordinate_subgraph_coordination(
                     coordination_id, task_description, agent_states, max_rounds
                 )
             else:
-                msg = f"Unknown coordination strategy: {self.system_config.coordination_strategy}"
+                msg = f"Unknown coordination strategy: {strategy}"
                 raise ValueError(msg)
 
             result.execution_time = time.time() - start_time
@@ -234,7 +265,7 @@ class MultiAgentCoordinator:
             return CoordinationResult(
                 coordination_id=coordination_id,
                 system_id=self.system_config.system_id,
-                strategy=CoordinationStrategy(self.system_config.coordination_strategy),
+                strategy=self._resolve_strategy(),
                 success=False,
                 total_rounds=0,
                 final_result={},
@@ -307,12 +338,15 @@ class MultiAgentCoordinator:
 
         # Generate final result
         final_result = self._synthesize_results(agent_states)
+        any_ok = any(
+            state.status == WorkflowStatus.COMPLETED for state in agent_states.values()
+        )
 
         return CoordinationResult(
             coordination_id=coordination_id,
             system_id=self.system_config.system_id,
             strategy=CoordinationStrategy.COLLABORATIVE,
-            success=True,
+            success=any_ok,
             total_rounds=len(rounds),
             final_result=final_result,
             agent_results={
@@ -375,12 +409,15 @@ class MultiAgentCoordinator:
 
         # Generate final result
         final_result = self._synthesize_results(agent_states)
+        any_ok = any(
+            state.status == WorkflowStatus.COMPLETED for state in agent_states.values()
+        )
 
         return CoordinationResult(
             coordination_id=coordination_id,
             system_id=self.system_config.system_id,
             strategy=CoordinationStrategy.SEQUENTIAL,
-            success=True,
+            success=any_ok,
             total_rounds=len(rounds),
             final_result=final_result,
             agent_results={
@@ -644,16 +681,23 @@ class MultiAgentCoordinator:
                 "iteration": agent_state.iteration_count,
             }
 
-            # Execute agent
+            # Execute agent (Pydantic AI RunResult exposes .output)
             result = await agent.run(str(agent_input))
 
             agent_state.status = WorkflowStatus.COMPLETED
             agent_state.end_time = datetime.now()
 
-            if hasattr(result, "model_dump"):
-                model_dump_method = getattr(result, "model_dump", None)
-                if model_dump_method is not None and callable(model_dump_method):
-                    return model_dump_method()
+            output_attr = getattr(result, "output", None)
+            if output_attr is not None:
+                if isinstance(output_attr, dict):
+                    return output_attr
+                return {"output": output_attr}
+            model_dump_method = getattr(result, "model_dump", None)
+            if callable(model_dump_method):
+                dumped = model_dump_method()
+                if isinstance(dumped, dict):
+                    return dumped
+                return {"result": dumped}
             return {"result": str(result)}
 
         except Exception as e:
@@ -662,12 +706,17 @@ class MultiAgentCoordinator:
             agent_state.end_time = datetime.now()
             raise
 
-    def _get_agent_role(self, agent_id: str) -> AgentRole:
-        """Get the role of an agent."""
+    def _get_agent_role(self, agent_id: str) -> str:
+        """Get the role string for AgentState (workflow AgentRole values)."""
         for agent_config in self.system_config.agents:
             if agent_config.agent_id == agent_id:
-                return AgentRole(agent_config.role.value)
-        return AgentRole.EXECUTOR
+                role_val = str(agent_config.role.value)
+                try:
+                    AgentRole(role_val)
+                except ValueError:
+                    return AgentRole.EXECUTOR.value
+                return role_val
+        return AgentRole.EXECUTOR.value
 
     def _determine_pipeline_order(
         self, agent_states: dict[str, AgentState]

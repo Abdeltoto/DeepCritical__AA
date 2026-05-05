@@ -185,7 +185,7 @@ class MCPServerManager:
         """Stop a deployed MCP server."""
         if server_name in self.deployments:
             deployment = self.deployments[server_name]
-            deployment.status = "stopped"
+            deployment.status = MCPServerStatus.STOPPED
             return True
         return False
 
@@ -617,15 +617,16 @@ def mcp_server_stop_tool(ctx: Any) -> str:
     return f"Stop failed: {result.error}"
 
 
-# Register tools with the global registry
-def register_mcp_server_tools():
-    """Register MCP server tools with the global registry."""
-    registry.register("mcp_server_deploy", MCPServerDeploymentTool)
-    registry.register("mcp_server_list", MCPServerListTool)
-    registry.register("mcp_server_execute", MCPServerExecuteTool)
-    registry.register("mcp_server_status", MCPServerStatusTool)
-    registry.register("mcp_server_stop", MCPServerStopTool)
-
-
-# Auto-register when module is imported
-register_mcp_server_tools()
+# NOTE:
+# This module overlaps with `DeepResearch/src/tools/mcp_server_management.py`, which
+# provides a more complete management surface. To avoid tool-name collisions in the
+# canonical registry, we do NOT auto-register these tools under the canonical names.
+#
+# If you need these legacy implementations explicitly, call `register_mcp_server_tools_legacy()`.
+def register_mcp_server_tools_legacy():
+    """Register legacy MCP server tools under *_legacy names."""
+    registry.register("mcp_server_deploy_legacy", MCPServerDeploymentTool)
+    registry.register("mcp_server_list_legacy", MCPServerListTool)
+    registry.register("mcp_server_execute_legacy", MCPServerExecuteTool)
+    registry.register("mcp_server_status_legacy", MCPServerStatusTool)
+    registry.register("mcp_server_stop_legacy", MCPServerStopTool)

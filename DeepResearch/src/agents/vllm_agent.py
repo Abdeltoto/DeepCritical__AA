@@ -18,6 +18,7 @@ from DeepResearch.src.datatypes.vllm_dataclass import (
     QuantizationMethod,
     VllmConfig,
 )
+from DeepResearch.src.utils.vllm_client import VLLMAgent as VLLMApiClient
 from DeepResearch.src.utils.vllm_client import VLLMClient
 
 
@@ -26,7 +27,8 @@ class VLLMAgent:
 
     def __init__(self, config: VLLMAgentConfig):
         self.config = config
-        self.client = VLLMClient(**config.client_config)
+        # Wrap the raw config model with an API-compatible client.
+        self.client: Any = VLLMApiClient(VLLMClient(**config.client_config))
         self.dependencies = VLLMAgentDependencies(
             vllm_client=self.client,
             default_model=config.default_model,

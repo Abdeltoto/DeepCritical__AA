@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from omegaconf import OmegaConf
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents.workflow_pattern_agents import (
@@ -25,6 +26,7 @@ from .agents.workflow_pattern_agents import (
     create_sequential_agent,
 )
 from .datatypes.agents import AgentDependencies, AgentType
+from .datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 
 # Import all the core components
 from .datatypes.workflow_patterns import (
@@ -88,7 +90,7 @@ class AgentExecutorRegistry:
         """Get an agent executor."""
         return self._executors.get(agent_id)
 
-    def list(self) -> list[str]:
+    def list_agent_ids(self) -> list[str]:
         """List all registered agent IDs."""
         return list(self._executors.keys())
 
@@ -143,7 +145,7 @@ class WorkflowPatternFactory:
 
     @staticmethod
     def create_collaborative_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ) -> CollaborativePatternAgent:
         """Create a collaborative pattern agent."""
@@ -151,7 +153,7 @@ class WorkflowPatternFactory:
 
     @staticmethod
     def create_sequential_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ) -> SequentialPatternAgent:
         """Create a sequential pattern agent."""
@@ -159,7 +161,7 @@ class WorkflowPatternFactory:
 
     @staticmethod
     def create_hierarchical_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ) -> HierarchicalPatternAgent:
         """Create a hierarchical pattern agent."""
@@ -167,7 +169,7 @@ class WorkflowPatternFactory:
 
     @staticmethod
     def create_pattern_orchestrator(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ) -> PatternOrchestratorAgent:
         """Create a pattern orchestrator agent."""
@@ -175,7 +177,7 @@ class WorkflowPatternFactory:
 
     @staticmethod
     def create_adaptive_pattern_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ) -> AdaptivePatternAgent:
         """Create an adaptive pattern agent."""
@@ -203,7 +205,7 @@ class WorkflowPatternExecutor:
             agents=agents,
             agent_types=agent_types,
             agent_executors=agent_executors or {},
-            config=self.config.dict(),
+            config=OmegaConf.create(self.config.model_dump()),
         )
 
     async def execute_sequential_pattern(
@@ -219,7 +221,7 @@ class WorkflowPatternExecutor:
             agents=agents,
             agent_types=agent_types,
             agent_executors=agent_executors or {},
-            config=self.config.dict(),
+            config=OmegaConf.create(self.config.model_dump()),
         )
 
     async def execute_hierarchical_pattern(
@@ -237,7 +239,7 @@ class WorkflowPatternExecutor:
             subordinate_ids=subordinate_ids,
             agent_types=agent_types,
             agent_executors=agent_executors or {},
-            config=self.config.dict(),
+            config=OmegaConf.create(self.config.model_dump()),
         )
 
     async def execute_pattern(
@@ -255,7 +257,7 @@ class WorkflowPatternExecutor:
             agents=agents,
             agent_types=agent_types,
             agent_executors=agent_executors or {},
-            config=self.config.dict(),
+            config=OmegaConf.create(self.config.model_dump()),
         )
 
 

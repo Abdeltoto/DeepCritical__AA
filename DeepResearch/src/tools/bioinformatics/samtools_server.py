@@ -26,6 +26,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class SamtoolsServer(MCPServerBase):
@@ -45,12 +48,6 @@ class SamtoolsServer(MCPServerBase):
                 ],
             )
         super().__init__(config)
-
-    def _check_samtools_available(self) -> bool:
-        """Check if samtools is available on the system."""
-        import shutil
-
-        return shutil.which("samtools") is not None
 
     def _mock_result(
         self, operation: str, output_files: list[str] | None = None
@@ -168,10 +165,12 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            output_files = [output_file] if output_file else []
-            return self._mock_result("view", output_files)
+        output_files = [output_file] if output_file else []
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("view", output_files)
+        )
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(input_file):
@@ -283,9 +282,11 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            return self._mock_result("sort", [output_file])
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("sort", [output_file])
+        )
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(input_file):
@@ -358,10 +359,12 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            output_files = [f"{input_file}.bai"]
-            return self._mock_result("index", output_files)
+        output_files = [f"{input_file}.bai"]
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("index", output_files)
+        )
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(input_file):
@@ -421,11 +424,11 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and flag statistics
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            result = self._mock_result("flagstat", [])
-            result["flag_statistics"] = "Mock flag statistics output"
-            return result
+        mock_payload = self._mock_result("flagstat", [])
+        mock_payload["flag_statistics"] = "Mock flag statistics output"
+        miss = response_if_executable_missing("samtools", mock_payload)
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(input_file):
@@ -485,10 +488,12 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            output_files = [output_file] if output_file else []
-            return self._mock_result("stats", output_files)
+        output_files = [output_file] if output_file else []
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("stats", output_files)
+        )
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(input_file):
@@ -563,9 +568,11 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            return self._mock_result("merge", [output_file])
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("merge", [output_file])
+        )
+        if miss is not None:
+            return miss
 
         # Validate input files exist
         for input_file in input_files:
@@ -647,10 +654,12 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            output_files = [f"{fasta_file}.fai"] if not regions else []
-            return self._mock_result("faidx", output_files)
+        output_files = [f"{fasta_file}.fai"] if not regions else []
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("faidx", output_files)
+        )
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(fasta_file):
@@ -726,10 +735,12 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            output_files = [output_file] if output_file else []
-            return self._mock_result("fastq", output_files)
+        output_files = [output_file] if output_file else []
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("fastq", output_files)
+        )
+        if miss is not None:
+            return miss
 
         # Validate input file exists
         if not os.path.exists(input_file):
@@ -806,11 +817,11 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            result = self._mock_result("flags", [])
-            result["stdout"] = f"Mock flag conversion output for: {flags}"
-            return result
+        mock_payload = self._mock_result("flags", [])
+        mock_payload["stdout"] = f"Mock flag conversion output for: {flags}"
+        miss = response_if_executable_missing("samtools", mock_payload)
+        if miss is not None:
+            return miss
 
         if not flags:
             msg = "flags parameter must be provided"
@@ -868,9 +879,11 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            return self._mock_result("quickcheck", [])
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("quickcheck", [])
+        )
+        if miss is not None:
+            return miss
 
         # Validate input files exist
         for input_file in input_files:
@@ -946,10 +959,12 @@ class SamtoolsServer(MCPServerBase):
         Returns:
             Dictionary containing command executed, stdout, stderr, and output files
         """
-        # Check if samtools is available
-        if not self._check_samtools_available():
-            output_files = [output_file] if output_file else []
-            return self._mock_result("depth", output_files)
+        output_files = [output_file] if output_file else []
+        miss = response_if_executable_missing(
+            "samtools", self._mock_result("depth", output_files)
+        )
+        if miss is not None:
+            return miss
 
         # Validate input files exist
         for input_file in input_files:

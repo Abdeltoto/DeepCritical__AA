@@ -7,11 +7,15 @@ and results that align with DeepCritical's architecture.
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class SearchAgentConfig(BaseModel):
     """Configuration for the search agent."""
 
-    model: str = Field("gpt-4", description="Model to use for the agent")
+    model: str = Field(
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use for the agent"
+    )
     enable_analytics: bool = Field(
         True, description="Whether to enable analytics tracking"
     )

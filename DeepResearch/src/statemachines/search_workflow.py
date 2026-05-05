@@ -1,39 +1,32 @@
 """
-Search workflow using Pydantic Graph with integrated websearch and analytics tools.
+Search workflow with integrated websearch and analytics tools.
 
-This workflow demonstrates how to integrate the websearch and analytics tools
-into the existing Pydantic Graph state machine architecture.
+This module previously attempted to integrate with `pydantic_graph` but included
+a placeholder fallback that introduced type-checking ambiguity. We keep the
+workflow runnable and type-safe by using an explicit state-machine loop.
 """
 
-from typing import Any
+from __future__ import annotations
+
+import inspect
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Optional import for pydantic_graph
-try:
-    from pydantic_graph import BaseNode, End, Graph
-except ImportError:
-    # Create placeholder classes for when pydantic_graph is not available
-    from typing import Generic, TypeVar
-
-    T = TypeVar("T")
-
-    class Graph:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class BaseNode(Generic[T]):
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class End:
-        def __init__(self, *args, **kwargs):
-            pass
-
-
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.rag import Chunk, Document
 from DeepResearch.src.tools.integrated_search_tools import IntegratedSearchTool
 from DeepResearch.src.utils.execution_status import ExecutionStatus
+
+
+@dataclass(frozen=True)
+class End:
+    output: Any
+
+
+class _Node(Protocol):
+    def run(self, state: SearchWorkflowState) -> Any: ...
 
 
 class SearchWorkflowState(BaseModel):
@@ -70,7 +63,7 @@ class SearchWorkflowState(BaseModel):
     model_config = ConfigDict(json_schema_extra={})
 
 
-class InitializeSearch(BaseNode[SearchWorkflowState]):  # type: ignore[unsupported-base]
+class InitializeSearch:
     """Initialize the search workflow."""
 
     def run(self, state: SearchWorkflowState) -> Any:
@@ -101,7 +94,7 @@ class InitializeSearch(BaseNode[SearchWorkflowState]):  # type: ignore[unsupport
             return End(f"Search failed: {e!s}")
 
 
-class PerformWebSearch(BaseNode[SearchWorkflowState]):  # type: ignore[unsupported-base]
+class PerformWebSearch:
     """Perform web search using the SearchAgent."""
 
     async def run(self, state: SearchWorkflowState) -> Any:
@@ -113,7 +106,7 @@ class PerformWebSearch(BaseNode[SearchWorkflowState]):  # type: ignore[unsupport
 
             # Create SearchAgent with config
             search_config = SearchAgentConfig(
-                model="anthropic:claude-sonnet-4-0",
+                model=DEFAULT_PYDANTIC_AI_MODEL,
                 default_num_results=state.num_results,
             )
             search_agent = SearchAgent(search_config)
@@ -178,7 +171,7 @@ class PerformWebSearch(BaseNode[SearchWorkflowState]):  # type: ignore[unsupport
             return End(f"Search failed: {e!s}")
 
 
-class ProcessResults(BaseNode[SearchWorkflowState]):  # type: ignore[unsupported-base]
+class ProcessResults:
     """Process and validate search results."""
 
     def run(self, state: SearchWorkflowState) -> Any:
@@ -223,14 +216,14 @@ class ProcessResults(BaseNode[SearchWorkflowState]):  # type: ignore[unsupported
         return "\n".join(summary_parts)
 
 
-class GenerateFinalResponse(BaseNode[SearchWorkflowState]):  # type: ignore[unsupported-base]
+class GenerateFinalResponse:
     """Generate the final response."""
 
     def run(self, state: SearchWorkflowState) -> Any:
         """Generate final response with all results."""
         try:
             # Create comprehensive response
-            response = {
+            response: dict[str, Any] = {
                 "query": state.query,
                 "search_type": state.search_type,
                 "num_results": state.num_results,
@@ -258,14 +251,14 @@ class GenerateFinalResponse(BaseNode[SearchWorkflowState]):  # type: ignore[unsu
             return End(f"Search failed: {e!s}")
 
 
-class SearchWorkflowError(BaseNode[SearchWorkflowState]):  # type: ignore[unsupported-base]
+class SearchWorkflowError:
     """Handle search workflow errors."""
 
     def run(self, state: SearchWorkflowState) -> Any:
         """Handle errors and provide fallback response."""
         error_summary = "; ".join(state.errors) if state.errors else "Unknown error"
 
-        response = {
+        response: dict[str, Any] = {
             "query": state.query,
             "search_type": state.search_type,
             "num_results": state.num_results,
@@ -281,18 +274,24 @@ class SearchWorkflowError(BaseNode[SearchWorkflowState]):  # type: ignore[unsupp
         return End(response)
 
 
-# Create the search workflow graph
-def create_search_workflow() -> Graph:
-    """Create the search workflow graph."""
-    return Graph(
-        nodes=[
-            InitializeSearch(),
-            PerformWebSearch(),
-            ProcessResults(),
-            GenerateFinalResponse(),
-            SearchWorkflowError(),
-        ]
-    )
+async def _run_workflow(start: _Node, state: SearchWorkflowState) -> Any:
+    node: Any = start
+    steps = 0
+    while node is not None:
+        steps += 1
+        if steps > 50:
+            return {"error": "Workflow exceeded max steps"}
+
+        result = node.run(state)
+        if inspect.isawaitable(result):
+            result = await result
+
+        if isinstance(result, End):
+            return result.output
+
+        node = result
+
+    return {"error": "Workflow ended without output"}
 
 
 # Workflow execution function
@@ -314,11 +313,8 @@ async def run_search_workflow(
         chunk_overlap=chunk_overlap,
     )
 
-    # Create and run workflow
-    workflow = create_search_workflow()
-    result = await workflow.run(InitializeSearch(), state=state)  # type: ignore
-
-    return result.output if hasattr(result, "output") else {"error": "No output"}  # type: ignore
+    output = await _run_workflow(InitializeSearch(), state)
+    return output if isinstance(output, dict) else {"output": output}
 
 
 # Example usage

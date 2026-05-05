@@ -202,6 +202,16 @@ workflow:
     evidence_integration: 0.85
 ```
 
+### Host bioinformatics tools and mock mode (environment)
+
+Many bioinformatics MCP servers run **host subprocesses** (e.g. `samtools`, `bedtools`) when you call their Python APIs directly. By default, if a required executable is **not** on `PATH`, the server returns **`success: false`** with install guidance so missing tools cannot masquerade as successful runs.
+
+For **development and automated tests only**, you can opt into the legacy **mock-success** behavior when binaries are missing by setting:
+
+- **`DEEPC_BIOINFORMATICS_ALLOW_MOCK`**: set to `1`, `true`, or `yes` to allow mock outputs when tools are absent.
+
+This is the explicit **mock-mode** switch for those servers (there is no separate YAML `mock_mode` flag today). Production deployments should leave this unset.
+
 ## Database Configurations (`db/`)
 
 ### Neo4j Configuration
@@ -500,6 +510,23 @@ database:
   password: "${oc.env:DATABASE_PASSWORD}"
   host: "${oc.env:DATABASE_HOST,localhost}"
 ```
+
+## Deployment modes (production vs mock)
+
+DeepCritical supports **production-first tools** with explicit degraded fallbacks when optional services are unavailable.
+
+- **Production example config**: `configs/examples/production.yaml`
+  - **Neo4j vector store**: `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`
+  - **VLLM endpoints (optional overrides)**: see `configs/rag/llm/vllm_local.yaml` and `configs/rag/embeddings/vllm_local.yaml`
+- **Mock/offline example config**: `configs/examples/mock.yaml`
+  - Uses **in-memory** storage and avoids networked LLM generation (returns a degraded synthesis).
+
+Common tool env vars:
+
+- **Neo4j**: `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`
+- **Web search** (when enabled by the chosen tool implementation): `SERPER_API_KEY`
+- **Experimental DeepAgent middleware**: set `DEEPC_ENABLE_DEEP_AGENT_MIDDLEWARE=1` to opt in (disabled by default)
+- **Bioinformatics mock when tools are missing (dev/tests only)**: `DEEPC_BIOINFORMATICS_ALLOW_MOCK=1` (see [Host bioinformatics tools and mock mode](#host-bioinformatics-tools-and-mock-mode-environment) above)
 
 ## Best Practices
 

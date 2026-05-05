@@ -44,6 +44,7 @@ from DeepResearch.src.datatypes.bioinformatics import (
     FusedDataset,
     ReasoningTask,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.rag import (
     Document,
     RAGQuery,
@@ -112,7 +113,7 @@ class TestPlannerAgent:
             agent = PlannerAgent()
 
             assert agent.agent_type == AgentType.PLANNER
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
 
     def test_planner_custom_model(self):
         """Test PlannerAgent with custom model."""
@@ -721,7 +722,7 @@ class TestSearchAgent:
             agent = SearchAgent()
 
             assert agent.agent_type == AgentType.SEARCH
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
 
     def test_search_agent_custom_model(self):
         """Test SearchAgent with custom model."""
@@ -822,7 +823,7 @@ class TestSearchAgent:
             assert result == {"error": "Search failed due to network timeout"}
 
     def test_tool_registration_success(self):
-        """Test that search tools are registered successfully when available."""
+        """SearchAgent intentionally skips pydantic-ai tool registration for web tools."""
         # Mock the Pydantic AI Agent instance
         mock_agent_instance = Mock()
 
@@ -832,35 +833,17 @@ class TestSearchAgent:
             with patch(
                 "DeepResearch.src.tools.websearch_tools.ChunkedSearchTool"
             ) as mock_chunked_search_tool_cls:
-                # Create mock instances for the tools
-                mock_web_tool_instance = Mock()
-                mock_chunked_tool_instance = Mock()
-
-                # Configure the tool classes to return our mock instances when instantiated
-                mock_web_search_tool_cls.return_value = mock_web_tool_instance
-                mock_chunked_search_tool_cls.return_value = mock_chunked_tool_instance
-
                 # Create a SearchAgent instance with a mocked _agent
                 with patch("DeepResearch.agents.Agent"):
                     agent = SearchAgent()
 
-                # Manually set the _agent to our mock
                 agent._agent = mock_agent_instance
 
-                # Call _register_tools directly
                 agent._register_tools()
 
-                # Cannot verify that both tool classes were instantiated exactly once
-                # as agent._register_tools() instantiates them once more.
-                # mock_web_search_tool_cls.assert_called_once()
-                # mock_chunked_search_tool_cls.assert_called_once()
-
-                # Verify that the run methods of both tool instances were registered with the agent
-                mock_agent_instance.tool.assert_any_call(mock_web_tool_instance.run)
-                mock_agent_instance.tool.assert_any_call(mock_chunked_tool_instance.run)
-
-                # Verify that exactly 2 tools were registered (no more, no less)
-                assert mock_agent_instance.tool.call_count == 2
+                mock_web_search_tool_cls.assert_not_called()
+                mock_chunked_search_tool_cls.assert_not_called()
+                mock_agent_instance.tool.assert_not_called()
 
     def test_tool_registration_failure_graceful(self):
         """Test that SearchAgent handles tool import failures gracefully."""
@@ -887,7 +870,7 @@ class TestSearchAgent:
 
                         # Verify the agent was created successfully despite the import failure
                         assert agent.agent_type == AgentType.SEARCH
-                        assert agent.model_name == "anthropic:claude-sonnet-4-0"
+                        assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
 
                         # Verify that the tool method was never called (since imports failed)
                         mock_tool_method.assert_not_called()
@@ -903,7 +886,7 @@ class TestRAGAgent:
             agent = RAGAgent()
 
             assert agent.agent_type == AgentType.RAG
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._agent is not None
 
     def test_rag_agent_custom_model(self):
@@ -1046,7 +1029,7 @@ class TestRAGAgent:
         assert agent._agent is None
 
     def test_initialize_agent_registers_rag_tools_successfully(self, monkeypatch):
-        """Ensure _initialize_agent successfully loads and registers both RAG tools."""
+        """RAGAgent skips pydantic-ai IntegratedSearchTool registration (noop _register_tools)."""
 
         with patch(
             "DeepResearch.src.tools.integrated_search_tools.IntegratedSearchTool"
@@ -1057,12 +1040,8 @@ class TestRAGAgent:
                 with patch("DeepResearch.agents.Agent"):
                     agent = RAGAgent()
                     agent._initialize_agent(system_prompt="Test", instructions="Test")
-                    # Register RAG tools
                     agent._register_tools()
-                    assert MockIntegrated.called
-                    # assert MockRAG.called
-                    # Not sure why RAGSearch tool is not registered
-                    # Need to double-check with @Tonic
+                    assert not MockIntegrated.called
                     assert hasattr(agent._agent, "tool")
 
 
@@ -1076,7 +1055,7 @@ class TestBioinformaticsAgent:
             agent = BioinformaticsAgent()
 
             assert agent.agent_type == AgentType.BIOINFORMATICS
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._agent is not None
 
     def test_bioinformatics_agent_custom_model(self):
@@ -1208,7 +1187,7 @@ class TestDeepSearchAgent:
             agent = DeepSearchAgent()
 
             assert agent.agent_type == AgentType.DEEPSEARCH
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._agent is not None
 
     def test_deepsearch_agent_custom_model(self):
@@ -1277,7 +1256,7 @@ class TestEvaluatorAgent:
             agent = EvaluatorAgent()
 
             assert agent.agent_type == AgentType.EVALUATOR
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._agent is not None
 
     def test_evaluator_agent_custom_model(self):
@@ -1356,7 +1335,7 @@ class TestDeepAgentPlanningAgent:
             agent._deep_agent = mock_deep_agent
 
             assert agent.agent_type == AgentType.DEEP_AGENT_PLANNING
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._deep_agent is not None
 
     @pytest.mark.asyncio
@@ -1416,7 +1395,7 @@ class TestDeepAgentFilesystem:
             agent._deep_agent = mock_deep_agent
 
             assert agent.agent_type == AgentType.DEEP_AGENT_FILESYSTEM
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._deep_agent is not None
 
     @pytest.mark.asyncio
@@ -1524,7 +1503,7 @@ def test_agent_creation():
             agent = create_agent(agent_type=agent_type)
 
             assert agent.agent_type == agent_type
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
             assert agent._agent is not None
             assert isinstance(agent, agent_class)
 

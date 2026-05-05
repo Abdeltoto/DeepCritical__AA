@@ -20,6 +20,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class MEMEServer(MCPServerBase):
@@ -90,13 +93,10 @@ class MEMEServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if tool is available (for testing/development environments)
-            import shutil
-
             tool_name_check = "meme"
-            if not shutil.which(tool_name_check):
-                # Return mock success result for testing when tool is not available
-                return {
+            miss = response_if_executable_missing(
+                tool_name_check,
+                {
                     "success": True,
                     "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
@@ -105,8 +105,11 @@ class MEMEServer(MCPServerBase):
                         method_params.get("output_file", f"mock_{operation}_output.txt")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             return method(**method_params)
@@ -1663,7 +1666,8 @@ dependencies:
 
                 # Find and stop container
                 container = DockerContainer("condaforge/miniforge3:latest")
-                container.with_name(self.container_name)
+                if self.container_name:
+                    container.with_name(self.container_name)
                 container.stop()
 
                 self.container_id = None

@@ -8,7 +8,7 @@ workflow with the existing tool registry system.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
 
@@ -91,7 +91,7 @@ class DeepSearchWorkflowTool(ToolRunner):
             # from omegaconf import DictConfig
             # config_obj = DictConfig(config) if not isinstance(config, DictConfig) else config
             # final_output = run_deepsearch_workflow(question, config_obj)
-            final_output = {"error": "Deep search workflow not available"}
+            final_output = "Deep search workflow not available"
 
             # Parse the output to extract structured information
             parsed_results = self._parse_workflow_output(final_output)
@@ -160,7 +160,7 @@ class DeepSearchWorkflowTool(ToolRunner):
                     try:
                         parsed["quality_metrics"][key.strip()] = float(value.strip())
                     except ValueError:
-                        parsed["quality_metrics"][key.strip()] = value.strip()
+                        parsed["quality_metrics"][key.strip()] = 0.0
             elif current_section == "processing_summary" and line.startswith("- "):
                 # Parse processing summary
                 summary_line = line[2:]  # Remove "- " prefix
@@ -230,7 +230,7 @@ class DeepSearchAgentTool(ToolRunner):
 
             # Run the deep search workflow
             # final_output = run_deepsearch_workflow(question, config)
-            final_output = {"error": "Deep search workflow not available"}
+            final_output = "Deep search workflow not available"
 
             # Enhance output with agent personality
             enhanced_response = self._enhance_with_agent_personality(
@@ -259,7 +259,7 @@ class DeepSearchAgentTool(ToolRunner):
         self, personality: str, depth: str, format_type: str
     ) -> dict[str, Any]:
         """Create configuration based on agent parameters."""
-        config = {
+        config: dict[str, Any] = {
             "deepsearch": {
                 "enabled": True,
                 "agent_personality": personality,
@@ -280,15 +280,16 @@ class DeepSearchAgentTool(ToolRunner):
             config["token_budget"] = 10000
 
         # Adjust based on research depth
+        deep_cfg = cast("dict[str, Any]", config["deepsearch"])
         if depth == "surface":
-            config["deepsearch"]["max_urls_per_step"] = 3
-            config["deepsearch"]["max_queries_per_step"] = 3
+            deep_cfg["max_urls_per_step"] = 3
+            deep_cfg["max_queries_per_step"] = 3
         elif depth == "deep":
-            config["deepsearch"]["max_urls_per_step"] = 8
-            config["deepsearch"]["max_queries_per_step"] = 8
+            deep_cfg["max_urls_per_step"] = 8
+            deep_cfg["max_queries_per_step"] = 8
         else:  # comprehensive (default)
-            config["deepsearch"]["max_urls_per_step"] = 5
-            config["deepsearch"]["max_queries_per_step"] = 5
+            deep_cfg["max_urls_per_step"] = 5
+            deep_cfg["max_queries_per_step"] = 5
 
         return config
 

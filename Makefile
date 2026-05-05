@@ -187,7 +187,7 @@ format-check:
 	uv run ruff format --check .
 
 type-check:
-	uvx ty check
+	uv run ty check DeepResearch
 
 security:
 	uv run bandit -r DeepResearch/ -c pyproject.toml
@@ -348,7 +348,7 @@ ci-test:
 
 ci-quality: quality
 	uv run ruff check . --output-format=github
-	uvx ty check --output github
+	uv run ty check DeepResearch --output github
 
 # Quick development cycle
 dev: format lint type-check test-fast

@@ -8,6 +8,7 @@ testcontainers deployment.
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
     MCPToolSpec,
+)
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
 )
 
 if TYPE_CHECKING:
@@ -152,16 +156,23 @@ class STARServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if tool is available (for testing/development environments)
-            import shutil
-
             tool_name_check = "STAR"
-            if not shutil.which(tool_name_check):
-                # Return mock success result for testing when tool is not available
-                return self._mock_result(operation, method_params)
+            miss = response_if_executable_missing(
+                tool_name_check,
+                self._mock_result(operation, method_params),
+            )
+            if miss is not None:
+                return miss
 
-            # Call the appropriate method
-            return method(**method_params)
+            result = method(**method_params)
+            if inspect.isawaitable(result):
+                return {
+                    "success": False,
+                    "error": f"Operation {operation} produced an awaitable but run() is synchronous; use an async entrypoint.",
+                }
+            if isinstance(result, dict):
+                return result
+            return {"success": True, "result": result}
         except Exception as e:
             return {
                 "success": False,

@@ -59,13 +59,8 @@ class WorkflowOrchestratorPrompts:
         can_spawn_subgraphs: bool = True,
         can_spawn_agents: bool = True,
     ) -> str:
-        """Get the system prompt with configuration parameters."""
-        return self.SYSTEM_PROMPT.format(
-            max_nested_loops=max_nested_loops,
-            coordination_strategy=coordination_strategy,
-            can_spawn_subgraphs=can_spawn_subgraphs,
-            can_spawn_agents=can_spawn_agents,
-        )
+        """Return the static system prompt (no template fields in MVP)."""
+        return self.SYSTEM_PROMPT
 
     def get_instructions(self) -> list[str]:
         """Get the orchestrator instructions."""

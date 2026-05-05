@@ -18,6 +18,7 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerConfig,
     MCPServerDeployment,
     MCPServerStatus,
+    MCPServerType,
 )
 from DeepResearch.src.tools.bioinformatics.bowtie2_server import Bowtie2Server
 from DeepResearch.src.tools.bioinformatics.fastqc_server import FastQCServer
@@ -60,12 +61,16 @@ class TestcontainersDeployer:
         self.code_executors: dict[str, DockerCommandLineCodeExecutor] = {}
         self.python_execution_tools: dict[str, PythonCodeExecutionTool] = {}
 
-        # Map server types to their implementations
-        self.server_implementations = {
+        # Map server names to server implementation classes (not instances).
+        self.server_implementations: dict[str, type[Any]] = {
             "fastqc": FastQCServer,
             "samtools": SamtoolsServer,
             "bowtie2": Bowtie2Server,
         }
+
+    def _get_server_implementation(self, server_name: str) -> type[Any] | None:
+        """Return the MCP server class registered for ``server_name``, if any."""
+        return self.server_implementations.get(server_name)
 
     def create_deployment_config(
         self, server_name: str, **kwargs
@@ -125,9 +130,8 @@ class TestcontainersDeployer:
                     server_name, config, **kwargs
                 )
 
-            # Update deployment registry
+            # Update deployment registry (keep ``server_implementations`` as class map only).
             self.deployments[server_name] = deployment
-            self.server_implementations[server_name] = server
 
             return deployment
 
@@ -199,7 +203,7 @@ class TestcontainersDeployer:
 
         try:
             # In a real implementation, this would stop the testcontainers container
-            deployment.status = "stopped"
+            deployment.status = MCPServerStatus.STOPPED
             deployment.finished_at = None  # Would be set by testcontainers
 
             # Clean up container reference
@@ -211,7 +215,7 @@ class TestcontainersDeployer:
 
         except Exception as e:
             logger.exception("Failed to stop MCP server '%s'", server_name)
-            deployment.status = "failed"
+            deployment.status = MCPServerStatus.FAILED
             deployment.error_message = str(e)
             return False
 
@@ -232,34 +236,35 @@ class TestcontainersDeployer:
             msg = f"Server '{server_name}' not deployed"
             raise ValueError(msg)
 
-        if deployment.status != "running":
+        if deployment.status != MCPServerStatus.RUNNING:
             msg = f"Server '{server_name}' is not running (status: {deployment.status})"
             raise ValueError(msg)
 
-        # Get server implementation
-        server = self.server_implementations.get(server_name)
-        if not server:
+        # Get server implementation class and run against an instance
+        server_cls = self.server_implementations.get(server_name)
+        if not server_cls:
             msg = f"Server implementation for '{server_name}' not found"
             raise ValueError(msg)
 
+        server_instance = server_cls()
+
         # Check if tool exists
-        available_tools = server.list_tools()
+        available_tools = server_instance.list_tools()
         if tool_name not in available_tools:
             msg = f"Tool '{tool_name}' not found on server '{server_name}'. Available tools: {', '.join(available_tools)}"
             raise ValueError(msg)
 
         # Execute tool
         try:
-            return server.execute_tool(tool_name, **kwargs)
+            return server_instance.execute_tool(tool_name, **kwargs)
         except Exception as e:
             msg = f"Tool execution failed: {e}"
             raise ValueError(msg)
 
-    def _get_server_type(self, server_name: str) -> str:
-        """Get the server type from the server name."""
-        if server_name in self.server_implementations:
-            return server_name
-        return "custom"
+    def _get_server_type(self, server_name: str) -> MCPServerType:
+        """Map deployment ``server_name`` to :class:`MCPServerType`."""
+        by_value = {t.value: t for t in MCPServerType}
+        return by_value.get(server_name, MCPServerType.CUSTOM)
 
     async def create_server_files(self, server_name: str, output_dir: str) -> list[str]:
         """Create necessary files for server deployment."""
@@ -299,22 +304,26 @@ class TestcontainersDeployer:
 
     def _generate_server_code(self, server_name: str) -> str:
         """Generate server code for deployment."""
-        server = self.server_implementations.get(server_name)
-        if not server:
+        server_cls = self.server_implementations.get(server_name)
+        if not server_cls:
             return "# Server implementation not found"
 
         # Generate basic server code structure
+        mod = server_cls.__module__
+        cls_name = server_cls.__name__
         return f'''"""
 Auto-generated MCP server for {server_name}.
 """
 
-from {server.__module__} import {server.__class__.__name__}
+from {mod} import {cls_name}
 
 # Create and run server
-server = {server.__class__.__name__}()
+server = {cls_name}()
 
 if __name__ == "__main__":
-    print(f"MCP Server '{server.name}' v{server.version} ready")
+    srv_name = getattr(server, "name", "{server_name}")
+    srv_ver = getattr(server, "version", "1.0.0")
+    print(f"MCP Server '{{srv_name}}' v{{srv_ver}} ready")
     print(f"Available tools: {{', '.join(server.list_tools())}}")
 '''
 
@@ -477,12 +486,14 @@ if __name__ == "__main__":
 
         if server_name not in self.code_executors:
             # Create code executor if it doesn't exist
+            cfg = getattr(deployment, "configuration", None)
+            image = "python:3.11-slim"
+            if cfg is not None:
+                image = str(getattr(cfg, "container_image", None) or image)
             self.code_executors[server_name] = DockerCommandLineCodeExecutor(
-                image=deployment.configuration.image
-                if hasattr(deployment.configuration, "image")
-                else "python:3.11-slim",
-                timeout=kwargs.get("timeout", 60),
-                work_dir=f"/tmp/{server_name}_code_blocks",
+                image=image,
+                timeout=int(kwargs.get("timeout", 60)),
+                work_dir=Path(f"/tmp/{server_name}_code_blocks"),
             )
 
         executor = self.code_executors[server_name]

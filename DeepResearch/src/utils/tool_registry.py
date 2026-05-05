@@ -8,6 +8,47 @@ from DeepResearch.src.datatypes.tool_specs import ToolCategory, ToolSpec
 
 # Import core tool types from datatypes
 from DeepResearch.src.datatypes.tools import ExecutionResult, MockToolRunner, ToolRunner
+from DeepResearch.src.tools.registry import (
+    CanonicalExecutionResult,
+    CanonicalTool,
+    CanonicalToolSpec,
+    ToolCollisionError,
+    ToolNotFoundError,
+    canonical_registry,
+)
+
+
+class _PrimeRunnerAdapter(CanonicalTool):
+    """Adapt PRIME ToolRunner instances to canonical registry interface."""
+
+    def __init__(self, tool_spec: ToolSpec, runner: ToolRunner):
+        self._runner = runner
+        self.spec = CanonicalToolSpec(
+            name=tool_spec.name,
+            description=getattr(tool_spec, "description", "") or tool_spec.name,
+            inputs=dict(tool_spec.input_schema),
+            outputs=dict(tool_spec.output_schema),
+            category=tool_spec.category.value
+            if hasattr(tool_spec, "category")
+            else None,
+            dependencies=list(getattr(tool_spec, "dependencies", [])),
+        )
+
+    def validate(self, params: dict[str, Any]) -> tuple[bool, str | None]:
+        res = self._runner.validate_inputs(params)
+        return (res.success, res.error)
+
+    def run(self, params: dict[str, Any]) -> CanonicalExecutionResult:
+        res = self._runner.run(params)
+        return CanonicalExecutionResult(
+            success=res.success,
+            data=dict(res.data),
+            error=res.error,
+            metadata=dict(res.metadata),
+        )
+
+    async def arun(self, params: dict[str, Any]) -> CanonicalExecutionResult:
+        raise NotImplementedError
 
 
 class ToolRegistry:
@@ -16,7 +57,8 @@ class ToolRegistry:
     def __init__(self):
         self.tools: dict[str, ToolSpec] = {}
         self.runners: dict[str, ToolRunner] = {}
-        self.mock_mode = True  # Default to mock mode for development
+        # Mock mode remains supported but must be explicitly enabled by callers.
+        self.mock_mode = False
 
     def register_tool(
         self, tool_spec: ToolSpec, runner_class: type[ToolRunner] | None = None
@@ -28,6 +70,15 @@ class ToolRegistry:
             self.runners[tool_spec.name] = runner_class(tool_spec)
         elif self.mock_mode:
             self.runners[tool_spec.name] = MockToolRunner(tool_spec)
+
+        # Also register into canonical registry when a runner exists.
+        if tool_spec.name in self.runners:
+            runner = self.runners[tool_spec.name]
+            canonical_registry.register(
+                tool_spec.name,
+                lambda ts=tool_spec, r=runner: _PrimeRunnerAdapter(ts, r),
+                override=False,
+            )
 
     def get_tool_spec(self, tool_name: str) -> ToolSpec | None:
         """Get tool specification by name."""
@@ -45,16 +96,26 @@ class ToolRegistry:
         self, tool_name: str, parameters: dict[str, Any]
     ) -> ExecutionResult:
         """Execute a tool with given parameters."""
-        if tool_name not in self.tools:
-            return ExecutionResult(success=False, error=f"Tool not found: {tool_name}")
-
-        if tool_name not in self.runners:
+        # Prefer canonical registry execution for consistent behavior.
+        try:
+            cres = canonical_registry.execute(tool_name, parameters)
             return ExecutionResult(
-                success=False, error=f"No runner registered for tool: {tool_name}"
+                success=cres.success,
+                data=dict(cres.data),
+                error=cres.error,
+                metadata=dict(cres.metadata),
             )
-
-        runner = self.runners[tool_name]
-        return runner.run(parameters)
+        except Exception:
+            if tool_name not in self.tools:
+                return ExecutionResult(
+                    success=False, error=f"Tool not found: {tool_name}"
+                )
+            if tool_name not in self.runners:
+                return ExecutionResult(
+                    success=False, error=f"No runner registered for tool: {tool_name}"
+                )
+            runner = self.runners[tool_name]
+            return runner.run(parameters)
 
     def validate_tool_execution(
         self, tool_name: str, parameters: dict[str, Any]
@@ -95,6 +156,13 @@ class ToolRegistry:
         for tool_name, tool_spec in self.tools.items():
             if tool_name not in self.runners:
                 self.runners[tool_name] = MockToolRunner(tool_spec)
+                canonical_registry.register(
+                    tool_name,
+                    lambda ts=tool_spec, r=self.runners[tool_name]: _PrimeRunnerAdapter(
+                        ts, r
+                    ),
+                    override=True,
+                )
 
     def disable_mock_mode(self) -> None:
         """Disable mock mode (requires real runners to be registered)."""

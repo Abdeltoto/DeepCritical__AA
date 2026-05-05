@@ -10,37 +10,10 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
+from urllib.parse import urlparse
 
-# Optional import for pydantic_graph
-try:
-    from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
-except ImportError:
-    # Create placeholder classes for when pydantic_graph is not available
-    from typing import Generic, TypeVar
-
-    T = TypeVar("T")
-
-    class BaseNode(Generic[T]):
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class End:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class Graph:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class GraphRunContext:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class Edge:
-        def __init__(self, *args, **kwargs):
-            pass
-
+from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
 
 from DeepResearch.src.datatypes.rag import (
     Document,
@@ -49,8 +22,13 @@ from DeepResearch.src.datatypes.rag import (
     RAGResponse,
     SearchType,
 )
-from DeepResearch.src.datatypes.vllm_integration import VLLMDeployment, VLLMRAGSystem
+from DeepResearch.src.datatypes.vllm_integration import (
+    VLLMDeployment,
+    VLLMEmbeddings,
+    VLLMLLMProvider,
+)
 from DeepResearch.src.utils.execution_status import ExecutionStatus
+from DeepResearch.src.vector_stores import InMemoryVectorStore, create_vector_store
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -75,10 +53,10 @@ class RAGState:
 
 
 @dataclass
-class InitializeRAG(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class InitializeRAG(BaseNode[RAGState, None, str]):
     """Initialize RAG system with configuration."""
 
-    async def run(self, ctx: GraphRunContext[RAGState]) -> LoadDocuments:
+    async def run(self, ctx: GraphRunContext[RAGState]) -> LoadDocuments | RAGError:
         """Initialize RAG system components."""
         try:
             cfg = ctx.state.config
@@ -155,10 +133,10 @@ class InitializeRAG(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
 
 @dataclass
-class LoadDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class LoadDocuments(BaseNode[RAGState, None, str]):
     """Load documents for RAG processing."""
 
-    async def run(self, ctx: GraphRunContext[RAGState]) -> ProcessDocuments:
+    async def run(self, ctx: GraphRunContext[RAGState]) -> ProcessDocuments | RAGError:
         """Load documents from various sources."""
         try:
             cfg = ctx.state.config
@@ -222,10 +200,10 @@ class LoadDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
 
 @dataclass
-class ProcessDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class ProcessDocuments(BaseNode[RAGState, None, str]):
     """Process and chunk documents for vector storage."""
 
-    async def run(self, ctx: GraphRunContext[RAGState]) -> StoreDocuments:
+    async def run(self, ctx: GraphRunContext[RAGState]) -> StoreDocuments | RAGError:
         """Process documents into chunks."""
         try:
             if not ctx.state.documents:
@@ -234,6 +212,8 @@ class ProcessDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
             # Chunk documents based on configuration
             rag_config = ctx.state.rag_config
+            if rag_config is None:
+                raise RuntimeError("RAG config not initialized")
             chunked_documents = await self._chunk_documents(
                 ctx.state.documents, rag_config.chunk_size, rag_config.chunk_overlap
             )
@@ -310,33 +290,43 @@ class ProcessDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
 
 @dataclass
-class StoreDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class StoreDocuments(BaseNode[RAGState, None, str]):
     """Store documents in vector database."""
 
-    async def run(self, ctx: GraphRunContext[RAGState]) -> QueryRAG:
+    async def run(self, ctx: GraphRunContext[RAGState]) -> QueryRAG | RAGError:
         """Store documents in vector store."""
         try:
-            # Initialize VLLM RAG system
             rag_config = ctx.state.rag_config
-            deployment = self._create_vllm_deployment(rag_config)
-            rag_system = VLLMRAGSystem(deployment=deployment)
+            if rag_config is None:
+                raise RuntimeError("RAG config not initialized")
+            if rag_config is None:
+                msg = "RAG config not initialized"
+                raise RuntimeError(msg)
 
-            await rag_system.initialize()
+            # Initialize embeddings + LLM providers
+            embeddings = self._create_embeddings_provider(rag_config)
+            llm = self._create_llm_provider(rag_config)
 
-            # Store documents
-            # TODO: Implement vector store integration
-            # if hasattr(rag_system, 'vector_store') and rag_system.vector_store:
-            #     document_ids = await rag_system.vector_store.add_documents(
-            #         ctx.state.documents
-            #     )
-            #     ctx.state.processing_steps.append(
-            #         f"stored_{len(document_ids)}_documents"
-            #     )
-            # else:
-            ctx.state.processing_steps.append("vector_store_not_available")
+            vector_store = create_vector_store(rag_config.vector_store, embeddings)
 
-            # Store RAG system in context for querying
-            ctx.set("rag_system", rag_system)
+            # Store documents (best effort). If embeddings/LLM aren't available,
+            # we still keep the workflow runnable and report degraded state.
+            document_ids: list[str] = []
+            try:
+                document_ids = await vector_store.add_documents(ctx.state.documents)
+                ctx.state.processing_steps.append(
+                    f"stored_{len(document_ids)}_documents"
+                )
+            except Exception as e:
+                ctx.state.processing_steps.append("vector_store_store_failed")
+                ctx.state.errors.append(f"Vector store ingest failed: {e!s}")
+
+            # Store components in graph context for querying
+            # Persist in state (GraphRunContext has no `.set()`).
+            ctx.state.rag_result = ctx.state.rag_result or {}
+            ctx.state.rag_result["vector_store"] = vector_store
+            ctx.state.rag_result["embeddings"] = embeddings
+            ctx.state.rag_result["llm"] = llm
 
             return QueryRAG()
 
@@ -360,44 +350,88 @@ class StoreDocuments(BaseNode[RAGState]):  # type: ignore[unsupported-base]
             port=rag_config.llm.port,
         )
 
-        # Create embedding server config
+        # Create embedding server config (parse URL so health checks are valid)
+        if rag_config.embeddings.base_url:
+            raw = str(rag_config.embeddings.base_url).strip()
+            parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+            emb_host = parsed.hostname or "localhost"
+            emb_port = parsed.port or 8001
+        else:
+            emb_host = "localhost"
+            emb_port = 8001
         embedding_server_config = VLLMEmbeddingServerConfig(
             model_name=rag_config.embeddings.model_name,
-            host=(
-                str(rag_config.embeddings.base_url)
-                if rag_config.embeddings.base_url
-                else "localhost"
-            ),
-            port=8001,  # Default embedding port
+            host=emb_host,
+            port=emb_port,
         )
 
         return VLLMDeployment(
             llm_config=llm_server_config, embedding_config=embedding_server_config
         )
 
+    def _create_embeddings_provider(self, rag_config: RAGConfig):
+        # Prefer VLLM embeddings if base_url is configured; otherwise fall back
+        # to a local sentence-transformers embedding model (best-effort).
+        if rag_config.embeddings.base_url:
+            return VLLMEmbeddings(rag_config.embeddings)
+
+        # Local fallback uses sentence-transformers (dependency already declared).
+        from DeepResearch.src.utils.sentence_transformers_embeddings import (
+            SentenceTransformersEmbeddings,
+        )
+
+        return SentenceTransformersEmbeddings(rag_config.embeddings)
+
+    def _create_llm_provider(self, rag_config: RAGConfig) -> VLLMLLMProvider:
+        # Current production path assumes a VLLM-compatible chat/completions server.
+        return VLLMLLMProvider(rag_config.llm)
+
 
 @dataclass
-class QueryRAG(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class QueryRAG(BaseNode[RAGState, None, str]):
     """Query the RAG system with the user's question."""
 
-    async def run(self, ctx: GraphRunContext[RAGState]) -> GenerateResponse:
+    async def run(self, ctx: GraphRunContext[RAGState]) -> GenerateResponse | RAGError:
         """Execute RAG query using RAGAgent."""
         try:
-            # Import here to avoid circular import
-            from DeepResearch.src.agents import RAGAgent
-
-            # Create RAGAgent
-            rag_agent = RAGAgent()
-            # await rag_agent.initialize()  # Method doesn't exist
-
             # Create RAG query
             rag_query = RAGQuery(
                 text=ctx.state.question, search_type=SearchType.SIMILARITY, top_k=5
             )
 
-            # Execute query using agent
+            vector_store = (ctx.state.rag_result or {}).get("vector_store")
+            llm = (ctx.state.rag_result or {}).get("llm")
+            if not vector_store or not llm:
+                msg = "RAG components not initialized"
+                raise RuntimeError(msg)
+
+            # Execute query
             start_time = time.time()
-            rag_response = rag_agent.execute_rag_query(rag_query)
+            # Build context and call LLM via RAGSystem.query logic
+            search_results = await vector_store.search(
+                query=rag_query.text,
+                search_type=rag_query.search_type,
+                retrieval_query=rag_query.retrieval_query,
+                top_k=rag_query.top_k,
+                score_threshold=rag_query.score_threshold,
+                filters=rag_query.filters,
+            )
+            context_parts = [
+                f"Document {r.rank}: {r.document.content}" for r in search_results
+            ]
+            context = "\n\n".join(context_parts)
+            from DeepResearch.src.prompts.rag import RAGPrompts
+
+            prompt = RAGPrompts.get_rag_query_prompt(rag_query.text, context)
+            generated_answer = await llm.generate(prompt, context=context)
+            processing_time = time.time() - start_time
+            rag_response = RAGResponse(
+                query=rag_query.text,
+                retrieved_documents=search_results,
+                generated_answer=generated_answer,
+                context=context,
+                processing_time=processing_time,
+            )
             processing_time = time.time() - start_time
 
             if rag_response:
@@ -410,19 +444,6 @@ class QueryRAG(BaseNode[RAGState]):  # type: ignore[unsupported-base]
                 ctx.state.processing_steps.append(
                     f"query_completed_in_{processing_time:.2f}s"
                 )
-            else:
-                # Fallback to direct system query
-                rag_system = ctx.get("rag_system")
-                if rag_system:
-                    rag_response = await rag_system.query(rag_query)
-                    ctx.state.rag_response = rag_response
-                    ctx.state.processing_steps.append(
-                        f"fallback_query_completed_in_{processing_time:.2f}s"
-                    )
-                else:
-                    msg = "RAG system not initialized and agent failed"
-                    raise RuntimeError(msg)
-
             return GenerateResponse()
 
         except Exception as e:
@@ -433,7 +454,7 @@ class QueryRAG(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
 
 @dataclass
-class GenerateResponse(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class GenerateResponse(BaseNode[RAGState, None, str]):
     """Generate final response from RAG results."""
 
     async def run(
@@ -458,7 +479,26 @@ class GenerateResponse(BaseNode[RAGState]):  # type: ignore[unsupported-base]
             error_msg = f"Failed to generate response: {e!s}"
             ctx.state.errors.append(error_msg)
             ctx.state.execution_status = ExecutionStatus.FAILED
-            return RAGError()
+            return End(self._format_error(ctx.state))
+
+    def _format_error(self, state: RAGState) -> str:
+        error_response = [
+            "RAG Workflow Failed",
+            "",
+            f"Question: {state.question}",
+            "",
+            "Errors:",
+        ]
+        for error in state.errors:
+            error_response.append(f"- {error}")
+        error_response.extend(
+            [
+                "",
+                f"Steps Completed: {', '.join(state.processing_steps)}",
+                f"Status: {state.execution_status.value}",
+            ]
+        )
+        return "\n".join(error_response)
 
     def _format_response(
         self, rag_response: RAGResponse | None, state: RAGState
@@ -524,7 +564,7 @@ class GenerateResponse(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
 
 @dataclass
-class RAGError(BaseNode[RAGState]):  # type: ignore[unsupported-base]
+class RAGError(BaseNode[RAGState, None, str]):
     """Handle RAG workflow errors."""
 
     async def run(
@@ -557,19 +597,45 @@ class RAGError(BaseNode[RAGState]):  # type: ignore[unsupported-base]
 
 rag_workflow_graph = Graph(
     nodes=(
-        InitializeRAG(),
-        LoadDocuments(),
-        ProcessDocuments(),
-        StoreDocuments(),
-        QueryRAG(),
-        GenerateResponse(),
-        RAGError(),
+        InitializeRAG,
+        LoadDocuments,
+        ProcessDocuments,
+        StoreDocuments,
+        QueryRAG,
+        GenerateResponse,
+        RAGError,
     ),
+    state_type=RAGState,
+    run_end_type=str,
 )
 
 
 def run_rag_workflow(question: str, config: DictConfig) -> str:
     """Run the complete RAG workflow."""
+    # Safe synchronous entrypoint: only use this when you *own* the event loop
+    # (e.g. CLI). Use `run_rag_workflow_async` from async contexts.
     state = RAGState(question=question, config=config)
-    result = asyncio.run(rag_workflow_graph.run(InitializeRAG(), state=state))  # type: ignore
-    return result.output or ""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(rag_workflow_graph.run(InitializeRAG(), state=state, deps=None))
+        return (
+            state.rag_response.generated_answer
+            if state.rag_response and state.rag_response.generated_answer
+            else (state.rag_response.context if state.rag_response else "")
+        )
+    else:
+        # We're already in an event loop; callers must use the async variant.
+        msg = "run_rag_workflow() cannot be called from a running event loop; use run_rag_workflow_async()."
+        raise RuntimeError(msg)
+
+
+async def run_rag_workflow_async(question: str, config: DictConfig) -> str:
+    """Async entrypoint for running the complete RAG workflow."""
+    state = RAGState(question=question, config=config)
+    await rag_workflow_graph.run(InitializeRAG(), state=state, deps=None)
+    return (
+        state.rag_response.generated_answer
+        if state.rag_response and state.rag_response.generated_answer
+        else (state.rag_response.context if state.rag_response else "")
+    )

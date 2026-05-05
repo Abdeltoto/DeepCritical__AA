@@ -26,7 +26,6 @@ from .jupyter import (
     JupyterKernelClient,
 )
 from .python_code_execution import PythonCodeExecutionTool
-from .testcontainers_deployer import TestcontainersDeployer
 
 __all__ = [
     "CodeBlock",
@@ -47,6 +46,15 @@ __all__ = [
     "PythonCodeExecutionTool",
     "PythonEnvironment",
     "SystemPythonEnvironment",
-    "TestcontainersDeployer",
     "WorkingDirectory",
 ]
+
+
+def __getattr__(name: str):
+    # Avoid importing heavy testcontainers + vendored MCP servers at module import time.
+    if name == "TestcontainersDeployer":
+        from .testcontainers_deployer import TestcontainersDeployer
+
+        return TestcontainersDeployer
+    msg = f"module '{__name__}' has no attribute '{name}'"
+    raise AttributeError(msg)

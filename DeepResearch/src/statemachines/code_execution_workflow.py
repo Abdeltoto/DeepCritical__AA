@@ -1,41 +1,27 @@
 """
-Code Execution Workflow using Pydantic Graph.
+Code Execution Workflow.
 
-This workflow implements the complete code generation and execution pipeline
-using the vendored AG2 framework, supporting bash commands and Python scripts
-with configurable execution environments.
+This module originally used Pydantic Graph, but the surrounding project now
+type-checks against a specific `pydantic_graph` API. To keep the code-execution
+workflow type-safe and runnable without tightly coupling to graph internals,
+we implement a lightweight explicit state-machine loop instead.
 """
 
-from typing import Any
+from __future__ import annotations
+
+import inspect
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
-
-# Optional import for pydantic_graph
-try:
-    from pydantic_graph import BaseNode, End, Graph
-except ImportError:
-    # Create placeholder classes for when pydantic_graph is not available
-    from typing import Generic, TypeVar
-
-    T = TypeVar("T")
-
-    class Graph:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class BaseNode(Generic[T]):
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class End:
-        def __init__(self, *args, **kwargs):
-            pass
-
 
 from DeepResearch.src.datatypes.agent_framework_content import TextContent
 from DeepResearch.src.datatypes.agent_framework_types import AgentRunResponse
 from DeepResearch.src.datatypes.coding_base import CodeBlock
 from DeepResearch.src.utils.execution_status import ExecutionStatus
+
+
+class _Node(Protocol):
+    def run(self, state: CodeExecutionWorkflowState) -> Any: ...
 
 
 class CodeExecutionWorkflowState(BaseModel):
@@ -112,7 +98,7 @@ class CodeExecutionWorkflowState(BaseModel):
     model_config = ConfigDict(json_schema_extra={})
 
 
-class InitializeCodeExecution(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupported-base]
+class InitializeCodeExecution:
     """Initialize the code execution workflow."""
 
     def run(self, state: CodeExecutionWorkflowState) -> Any:
@@ -122,15 +108,13 @@ class InitializeCodeExecution(BaseNode[CodeExecutionWorkflowState]):  # type: ig
             if not state.user_query or not state.user_query.strip():
                 state.errors.append("User query cannot be empty")
                 state.status = ExecutionStatus.FAILED
-                return End("Code execution failed: Empty query")
+                return None
 
             # Set default configuration
             if state.code_type not in [None, "bash", "python", "auto"]:
                 state.errors.append(f"Invalid code type: {state.code_type}")
                 state.status = ExecutionStatus.FAILED
-                return End(
-                    f"Code execution failed: Invalid code type {state.code_type}"
-                )
+                return None
 
             # Normalize code_type
             if state.code_type == "auto":
@@ -142,10 +126,10 @@ class InitializeCodeExecution(BaseNode[CodeExecutionWorkflowState]):  # type: ig
         except Exception as e:
             state.errors.append(f"Initialization failed: {e!s}")
             state.status = ExecutionStatus.FAILED
-            return End(f"Code execution failed: {e!s}")
+            return None
 
 
-class GenerateCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupported-base]
+class GenerateCode:
     """Generate code from natural language description."""
 
     async def run(self, state: CodeExecutionWorkflowState) -> Any:
@@ -186,10 +170,10 @@ class GenerateCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupp
         except Exception as e:
             state.errors.append(f"Code generation failed: {e!s}")
             state.status = ExecutionStatus.FAILED
-            return End(f"Code execution failed: {e!s}")
+            return None
 
 
-class ExecuteCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupported-base]
+class ExecuteCode:
     """Execute the generated code."""
 
     async def run(self, state: CodeExecutionWorkflowState) -> Any:
@@ -204,7 +188,7 @@ class ExecuteCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsuppo
             if not current_code:
                 state.errors.append("No code to execute")
                 state.status = ExecutionStatus.FAILED
-                return End("Code execution failed: No code to execute")
+                return None
 
             # Create code block if needed
             if not state.code_block:
@@ -250,10 +234,10 @@ class ExecuteCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsuppo
         except Exception as e:
             state.errors.append(f"Code execution failed: {e!s}")
             state.status = ExecutionStatus.FAILED
-            return End(f"Code execution failed: {e!s}")
+            return None
 
 
-class AnalyzeError(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupported-base]
+class AnalyzeError:
     """Analyze execution errors to understand what went wrong."""
 
     async def run(self, state: CodeExecutionWorkflowState) -> Any:
@@ -306,7 +290,7 @@ class AnalyzeError(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupp
             return ImproveCode()
 
 
-class ImproveCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupported-base]
+class ImproveCode:
     """Improve the code based on error analysis."""
 
     async def run(self, state: CodeExecutionWorkflowState) -> Any:
@@ -378,7 +362,7 @@ class ImproveCode(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsuppo
             return FormatResponse()
 
 
-class FormatResponse(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsupported-base]
+class FormatResponse:
     """Format the final response to the user."""
 
     def run(self, state: CodeExecutionWorkflowState) -> Any:
@@ -478,30 +462,20 @@ class FormatResponse(BaseNode[CodeExecutionWorkflowState]):  # type: ignore[unsu
             state.final_response = AgentRunResponse(messages=messages)
             state.status = ExecutionStatus.SUCCESS
 
-            return End("Code execution completed successfully")
+            return None
 
         except Exception as e:
             state.errors.append(f"Response formatting failed: {e!s}")
             state.status = ExecutionStatus.FAILED
-            return End(f"Code execution failed: {e!s}")
+            return None
 
 
 class CodeExecutionWorkflow:
-    """Complete code execution workflow using Pydantic Graph."""
+    """Complete code execution workflow as explicit state machine."""
 
     def __init__(self):
         """Initialize the code execution workflow."""
-        self.graph = Graph(
-            nodes=[
-                InitializeCodeExecution,
-                GenerateCode,
-                ExecuteCode,
-                AnalyzeError,
-                ImproveCode,
-                FormatResponse,
-            ],
-            state_type=CodeExecutionWorkflowState,
-        )
+        self._start_node: _Node = InitializeCodeExecution()
 
     async def execute(
         self,
@@ -544,10 +518,17 @@ class CodeExecutionWorkflow:
             max_improvement_attempts=max_improvement_attempts,
         )
 
-        # Execute workflow
-        final_state = await self.graph.run(initial_state)
-
-        return final_state
+        node: _Node | None = self._start_node
+        while node is not None:
+            step_result = node.run(initial_state)
+            if inspect.isawaitable(step_result):
+                step_result = await step_result
+            node = (
+                step_result
+                if step_result is None or hasattr(step_result, "run")
+                else None
+            )
+        return initial_state
 
 
 # Convenience functions for direct usage

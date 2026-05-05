@@ -19,6 +19,7 @@ from DeepResearch.src.datatypes.agents import (
     AgentType,
     ExecutionHistory,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 
 
 # Fixtures
@@ -76,7 +77,7 @@ class TestBaseAgentInitialization:
         agent = test_agent_class()
 
         assert agent.agent_type == AgentType.PARSER
-        assert agent.model_name == "anthropic:claude-sonnet-4-0"
+        assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
         assert isinstance(agent.dependencies, AgentDependencies)
         assert agent.status == AgentStatus.IDLE
         assert isinstance(agent.history, ExecutionHistory)
@@ -479,7 +480,7 @@ class TestParserAgent:
             agent = ParserAgent()
 
             assert agent.agent_type == AgentType.PARSER
-            assert agent.model_name == "anthropic:claude-sonnet-4-0"
+            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
 
     @pytest.mark.asyncio
     async def test_parse_question_success(self, mock_pydantic_agent):

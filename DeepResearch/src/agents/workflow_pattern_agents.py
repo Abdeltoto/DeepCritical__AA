@@ -12,6 +12,7 @@ from typing import Any
 
 from DeepResearch.agents import BaseAgent  # Use top-level BaseAgent to satisfy linters
 from DeepResearch.src.datatypes.agents import AgentDependencies, AgentResult, AgentType
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.workflow_patterns import InteractionPattern
 from DeepResearch.src.prompts.workflow_pattern_agents import WorkflowPatternAgentPrompts
 from DeepResearch.src.statemachines.workflow_pattern_statemachines import (
@@ -28,7 +29,7 @@ class WorkflowPatternAgent(BaseAgent):
     def __init__(
         self,
         pattern: InteractionPattern,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ):
         super().__init__(
@@ -78,7 +79,7 @@ class WorkflowPatternAgent(BaseAgent):
                     agents=agents,
                     agent_types=agent_types,
                     agent_executors=agent_executors,
-                    config=self.dependencies.config,
+                    config=None,
                 )
             elif self.pattern == InteractionPattern.SEQUENTIAL:
                 result = await run_sequential_pattern_workflow(
@@ -86,7 +87,7 @@ class WorkflowPatternAgent(BaseAgent):
                     agents=agents,
                     agent_types=agent_types,
                     agent_executors=agent_executors,
-                    config=self.dependencies.config,
+                    config=None,
                 )
             elif self.pattern == InteractionPattern.HIERARCHICAL:
                 coordinator_id = input_data.get(
@@ -102,7 +103,7 @@ class WorkflowPatternAgent(BaseAgent):
                     subordinate_ids=subordinate_ids,
                     agent_types=agent_types,
                     agent_executors=agent_executors,
-                    config=self.dependencies.config,
+                    config=None,
                 )
             else:
                 return AgentResult(
@@ -143,7 +144,7 @@ class CollaborativePatternAgent(WorkflowPatternAgent):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ):
         super().__init__(
@@ -203,7 +204,7 @@ class SequentialPatternAgent(WorkflowPatternAgent):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ):
         super().__init__(
@@ -262,7 +263,7 @@ class HierarchicalPatternAgent(WorkflowPatternAgent):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ):
         super().__init__(
@@ -328,7 +329,7 @@ class PatternOrchestratorAgent(BaseAgent):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ):
         super().__init__(
@@ -495,7 +496,7 @@ class AdaptivePatternAgent(BaseAgent):
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         dependencies: AgentDependencies | None = None,
     ):
         super().__init__(
@@ -605,7 +606,7 @@ class AdaptivePatternAgent(BaseAgent):
 
 # Factory functions for creating pattern agents
 def create_collaborative_agent(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     dependencies: AgentDependencies | None = None,
 ) -> CollaborativePatternAgent:
     """Create a collaborative pattern agent."""
@@ -613,7 +614,7 @@ def create_collaborative_agent(
 
 
 def create_sequential_agent(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     dependencies: AgentDependencies | None = None,
 ) -> SequentialPatternAgent:
     """Create a sequential pattern agent."""
@@ -621,7 +622,7 @@ def create_sequential_agent(
 
 
 def create_hierarchical_agent(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     dependencies: AgentDependencies | None = None,
 ) -> HierarchicalPatternAgent:
     """Create a hierarchical pattern agent."""
@@ -629,7 +630,7 @@ def create_hierarchical_agent(
 
 
 def create_pattern_orchestrator(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     dependencies: AgentDependencies | None = None,
 ) -> PatternOrchestratorAgent:
     """Create a pattern orchestrator agent."""
@@ -637,7 +638,7 @@ def create_pattern_orchestrator(
 
 
 def create_adaptive_pattern_agent(
-    model_name: str = "anthropic:claude-sonnet-4-0",
+    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
     dependencies: AgentDependencies | None = None,
 ) -> AdaptivePatternAgent:
     """Create an adaptive pattern agent."""

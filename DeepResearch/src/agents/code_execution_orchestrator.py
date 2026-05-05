@@ -19,6 +19,7 @@ from DeepResearch.src.agents.code_generation_agent import (
 )
 from DeepResearch.src.datatypes.agent_framework_types import AgentRunResponse
 from DeepResearch.src.datatypes.agents import AgentDependencies, AgentResult, AgentType
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.statemachines.code_execution_workflow import CodeExecutionWorkflow
 
 
@@ -27,7 +28,7 @@ class CodeExecutionConfig(BaseModel):
 
     # Agent configuration
     generation_model: str = Field(
-        "anthropic:claude-sonnet-4-0", description="Model for code generation"
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model for code generation"
     )
 
     # Execution configuration
@@ -159,7 +160,7 @@ class CodeExecutionOrchestrator:
                 metadata={
                     "orchestrator": "code_execution",
                     "generation_model": self.config.generation_model,
-                    "execution_config": self.config.dict(),
+                    "execution_config": self.config.model_dump(),
                 },
                 error=None,
                 execution_time=execution_time,
@@ -180,6 +181,9 @@ class CodeExecutionOrchestrator:
         self, user_message: str, code_type: str | None = None, **kwargs
     ) -> AgentRunResponse | None:
         """Execute using the state machine workflow."""
+        workflow = self.workflow
+        if workflow is None:
+            return None
         workflow_config = {
             "use_docker": kwargs.get("use_docker", self.config.use_docker),
             "use_jupyter": kwargs.get("use_jupyter", self.config.use_jupyter),
@@ -194,7 +198,7 @@ class CodeExecutionOrchestrator:
             ),
         }
 
-        state = await self.workflow.execute(
+        state = await workflow.execute(
             user_query=user_message, code_type=code_type, **workflow_config
         )
 
@@ -430,7 +434,7 @@ class CodeExecutionOrchestrator:
 
     def get_config(self) -> dict[str, Any]:
         """Get current configuration."""
-        return self.config.dict()
+        return self.config.model_dump()
 
 
 # Convenience functions for common use cases
@@ -454,7 +458,7 @@ async def execute_auto_code(description: str, **kwargs) -> AgentResult:
 
 # Factory function for creating configured orchestrators
 def create_code_execution_orchestrator(
-    generation_model: str = "anthropic:claude-sonnet-4-0",
+    generation_model: str = DEFAULT_PYDANTIC_AI_MODEL,
     use_docker: bool = True,
     use_jupyter: bool = False,
     max_retries: int = 3,

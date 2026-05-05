@@ -21,6 +21,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class FlyeServer(MCPServerBase):
@@ -227,20 +230,20 @@ class FlyeServer(MCPServerBase):
         if deterministic:
             cmd.append("--deterministic")
 
-        # Check if tool is available (for testing/development environments)
-        import shutil
-
         tool_name_check = "flye"
-        if not shutil.which(tool_name_check):
-            # Return mock success result for testing when tool is not available
-            return {
+        miss = response_if_executable_missing(
+            tool_name_check,
+            {
                 "command_executed": " ".join(cmd),
                 "stdout": "Mock output for Flye assembly operation",
                 "stderr": "",
                 "output_files": [str(out_dir)],
                 "success": True,
-                "mock": True,  # Indicate this is a mock result
-            }
+                "mock": True,
+            },
+        )
+        if miss is not None:
+            return miss
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)

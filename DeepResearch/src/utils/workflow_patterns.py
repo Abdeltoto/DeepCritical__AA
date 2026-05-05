@@ -332,14 +332,14 @@ class WorkflowPatternUtils:
     ) -> ConsensusResult:
         """Majority vote consensus."""
         # Count occurrences of each result
-        result_counts = {}
+        result_counts: dict[str, int] = {}
         for result in results:
             result_str = json.dumps(result, sort_keys=True)
             result_counts[result_str] = result_counts.get(result_str, 0) + 1
 
         # Find the most common result
         if result_counts:
-            most_common_result_str = max(result_counts, key=result_counts.get)
+            most_common_result_str = max(result_counts, key=lambda k: result_counts[k])
             most_common_count = result_counts[most_common_result_str]
             total_results = len(results)
 

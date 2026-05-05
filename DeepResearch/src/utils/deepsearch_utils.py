@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from typing import Any, cast
 
-from DeepResearch.src.datatypes.deepsearch import (
+from DeepResearch.src.utils.deepsearch_schemas import (
     ActionType,
     DeepSearchSchemas,
     EvaluationType,
@@ -659,8 +659,8 @@ class DeepSearchUtils:
     @staticmethod
     def create_search_orchestrator(schemas: DeepSearchSchemas) -> SearchOrchestrator:
         """Create a new search orchestrator."""
-        if hasattr(schemas, "model_dump") and callable(schemas.model_dump):
-            model_dump_method = schemas.model_dump
+        model_dump_method = getattr(schemas, "model_dump", None)
+        if callable(model_dump_method):
             config_result = model_dump_method()
             # Ensure config is a dict
             if isinstance(config_result, dict):

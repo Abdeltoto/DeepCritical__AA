@@ -61,27 +61,13 @@ except ImportError:
     FASTMCP_AVAILABLE = False
     _FastMCP = None
 
-# Import base classes - may not be available in all environments
-try:
-    from DeepResearch.src.datatypes.bioinformatics_mcp import (
-        MCPServerBase,  # type: ignore[import]
-    )
-    from DeepResearch.src.datatypes.mcp import (  # type: ignore[import]
-        MCPServerConfig,
-        MCPServerDeployment,
-        MCPServerStatus,
-        MCPServerType,
-    )
-
-    BASE_CLASS_AVAILABLE = True
-except ImportError:
-    # Fallback for environments without the full MCP framework
-    BASE_CLASS_AVAILABLE = False
-    MCPServerBase = object  # type: ignore[assignment]
-    MCPServerConfig = type(None)  # type: ignore[assignment]
-    MCPServerDeployment = type(None)  # type: ignore[assignment]
-    MCPServerStatus = type(None)  # type: ignore[assignment]
-    MCPServerType = type(None)  # type: ignore[assignment]
+from DeepResearch.src.datatypes.bioinformatics_mcp import MCPServerBase
+from DeepResearch.src.datatypes.mcp import (
+    MCPServerConfig,
+    MCPServerDeployment,
+    MCPServerStatus,
+    MCPServerType,
+)
 
 # Create MCP server instance if FastMCP is available
 mcp = FastMCP("cutadapt-server") if FASTMCP_AVAILABLE else None
@@ -500,17 +486,17 @@ if FASTMCP_AVAILABLE and mcp:
     cutadapt_tool = mcp.tool()(cutadapt)
 
 
-class CutadaptServer(MCPServerBase if BASE_CLASS_AVAILABLE else object):  # type: ignore
+class CutadaptServer(MCPServerBase):
     """MCP Server for Cutadapt adapter trimming tool."""
 
     def __init__(self, config=None, enable_fastmcp: bool = True):
         # Set name attribute for compatibility
         self.name = "cutadapt-server"
 
-        if BASE_CLASS_AVAILABLE and config is None and MCPServerConfig is not None:
+        if config is None:
             config = MCPServerConfig(
                 server_name="cutadapt-server",
-                server_type=MCPServerType.CUSTOM if MCPServerType else "custom",  # type: ignore[union-attr]
+                server_type=MCPServerType.CUSTOM,
                 container_image="condaforge/miniforge3:latest",
                 environment_variables={"CUTADAPT_VERSION": "4.4"},
                 capabilities=[
@@ -520,8 +506,7 @@ class CutadaptServer(MCPServerBase if BASE_CLASS_AVAILABLE else object):  # type
                 ],
             )
 
-        if BASE_CLASS_AVAILABLE:
-            super().__init__(config)
+        super().__init__(config)
 
         # Initialize FastMCP if available and enabled
         self.fastmcp_server = None
