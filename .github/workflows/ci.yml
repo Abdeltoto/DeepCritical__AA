@@ -207,5 +207,5 @@ jobs:
 
     - name: Run ty type check
       run: |
-        uvx ty==0.0.1a21 --version
-        uvx ty==0.0.1a21 check DeepResearch
+        uv run ty --version
+        uv run ty check DeepResearch

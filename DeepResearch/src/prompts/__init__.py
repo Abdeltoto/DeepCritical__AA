@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from . import deep_agent_graph
@@ -68,7 +68,7 @@ class PromptLoader:
 
         from datetime import timezone
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         vars_map.setdefault(
             "current_date_utc", now.strftime("%a, %d %b %Y %H:%M:%S GMT")
         )

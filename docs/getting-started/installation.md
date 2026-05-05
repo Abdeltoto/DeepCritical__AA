@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ## Using uv (Recommended)
@@ -52,7 +52,7 @@ make test
 ## System Requirements
 
 - **Operating System**: Linux, macOS, or Windows
-- **Python Version**: 3.10 or higher
+- **Python Version**: 3.11 or higher
 - **Memory**: At least 4GB RAM recommended for large workflows
 - **Storage**: 1GB+ free space for dependencies and cache
 
@@ -172,11 +172,11 @@ uv sync --reinstall
 # Check Python version
 python --version
 
-# Install Python 3.10+ if needed
+# Install Python 3.11+ if needed
 # On Ubuntu/Debian:
 sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt update
-sudo apt install python3.10 python3.10-venv
+sudo apt install python3.11 python3.11-venv
 ```
 
 ### Verification

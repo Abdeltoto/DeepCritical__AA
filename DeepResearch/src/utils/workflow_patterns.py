@@ -214,7 +214,7 @@ class WorkflowPatternUtils:
                     "messages_processed": len(agent_messages),
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return agent_id, {
                     "success": False,
                     "error": f"Agent {agent_id} timed out after {timeout}s",
@@ -672,7 +672,7 @@ class WorkflowPatternUtils:
         async def timeout_executor(messages: list[InteractionMessage]) -> Any:
             try:
                 return await asyncio.wait_for(executor(messages), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return {
                     "error": f"Execution timed out after {timeout}s",
                     "success": False,

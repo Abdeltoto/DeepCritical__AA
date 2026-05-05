@@ -13,7 +13,7 @@ import io
 import zipfile
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 import requests
@@ -194,7 +194,7 @@ def _build_paper(pmid: int) -> PubMedPaper | None:
     try:
         # Attempt to parse the year, and create a datetime object
         year = int(pubdate_str.split()[0])
-        publication_date = datetime(year, 1, 1, tzinfo=timezone.utc)
+        publication_date = datetime(year, 1, 1, tzinfo=UTC)
     except (ValueError, IndexError):
         publication_date = None
 

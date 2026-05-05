@@ -324,7 +324,7 @@ class AgentGraphExecutor:
                 "node": node_name,
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             execution_time = time.time() - start_time
             self.execution_history.append(
                 {

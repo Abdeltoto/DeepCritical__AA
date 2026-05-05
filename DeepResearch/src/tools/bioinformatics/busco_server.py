@@ -39,7 +39,7 @@ class BUSCOServer(MCPServerBase):
             config = MCPServerConfig(
                 server_name="busco-server",
                 server_type=MCPServerType.CUSTOM,
-                container_image="python:3.10-slim",
+                container_image="python:3.11-slim",
                 environment_variables={"BUSCO_VERSION": "5.4.7"},
                 capabilities=[
                     "genome_assessment",
@@ -697,7 +697,7 @@ class BUSCOServer(MCPServerBase):
             from testcontainers.core.container import DockerContainer
 
             # Create container
-            container = DockerContainer("python:3.10-slim")
+            container = DockerContainer("python:3.11-slim")
             container.with_name(f"mcp-busco-server-{id(self)}")
 
             # Install BUSCO and dependencies

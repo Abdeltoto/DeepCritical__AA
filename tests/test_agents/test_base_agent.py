@@ -432,7 +432,7 @@ class TestErrorHandling:
         with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
-            mock_pydantic_agent.run.side_effect = asyncio.TimeoutError("Timeout")
+            mock_pydantic_agent.run.side_effect = TimeoutError("Timeout")
 
             result = await agent.execute("test input")
 

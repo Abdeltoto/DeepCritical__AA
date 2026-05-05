@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,9 +18,7 @@ class ExecutionItem:
     status: ExecutionStatus
     result: dict[str, Any] | None = None
     error: str | None = None
-    timestamp: float = field(
-        default_factory=lambda: datetime.now(timezone.utc).timestamp()
-    )
+    timestamp: float = field(default_factory=lambda: datetime.now(UTC).timestamp())
     parameters: dict[str, Any] | None = None
     duration: float | None = None
     retry_count: int = 0
@@ -45,9 +43,7 @@ class ExecutionHistory:
     SUCCESS_RATE_THRESHOLD = 0.8
 
     items: list[ExecutionItem] = field(default_factory=list)
-    start_time: float = field(
-        default_factory=lambda: datetime.now(timezone.utc).timestamp()
-    )
+    start_time: float = field(default_factory=lambda: datetime.now(UTC).timestamp())
     end_time: float | None = None
 
     def add_item(self, item: ExecutionItem) -> None:
@@ -119,7 +115,7 @@ class ExecutionHistory:
 
     def finish(self) -> None:
         """Mark the execution as finished."""
-        self.end_time = datetime.now(timezone.utc).timestamp()
+        self.end_time = datetime.now(UTC).timestamp()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert history to dictionary for serialization."""
@@ -155,9 +151,7 @@ class ExecutionHistory:
             data = json.load(f)
 
         history = cls()
-        history.start_time = data.get(
-            "start_time", datetime.now(timezone.utc).timestamp()
-        )
+        history.start_time = data.get("start_time", datetime.now(UTC).timestamp())
         history.end_time = data.get("end_time")
 
         for item_data in data.get("items", []):
@@ -167,9 +161,7 @@ class ExecutionHistory:
                 status=ExecutionStatus(item_data["status"]),
                 result=item_data.get("result"),
                 error=item_data.get("error"),
-                timestamp=item_data.get(
-                    "timestamp", datetime.now(timezone.utc).timestamp()
-                ),
+                timestamp=item_data.get("timestamp", datetime.now(UTC).timestamp()),
                 parameters=item_data.get("parameters"),
                 duration=item_data.get("duration"),
                 retry_count=item_data.get("retry_count", 0),

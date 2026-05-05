@@ -1,7 +1,7 @@
 # ─── analytics.py ──────────────────────────────────────────────────────────────
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd  # already available in HF images
@@ -80,7 +80,7 @@ async def record_request(
     duration: float | None = None, num_results: int | None = None
 ) -> None:
     """Increment today's counter (UTC) atomically and optionally record request duration."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     with FileLock(LOCK_FILE):
         # Update counts
         data = _load()
@@ -100,7 +100,7 @@ async def record_request(
 
 def last_n_days_df(n: int = 30) -> pd.DataFrame:
     """Return a DataFrame with a row for each of the past *n* days."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with FileLock(LOCK_FILE):
         data = _load()
     records = []
@@ -121,7 +121,7 @@ def last_n_days_df(n: int = 30) -> pd.DataFrame:
 
 def last_n_days_avg_time_df(n: int = 30) -> pd.DataFrame:
     """Return a DataFrame with average request time for each of the past *n* days."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with FileLock(LOCK_FILE):
         times = _load_times()
     records = []

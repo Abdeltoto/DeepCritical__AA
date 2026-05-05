@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 
@@ -190,7 +190,7 @@ def test_build_paper(monkeypatch):
     assert paper.title == "Built Paper"
     assert paper.abstract == "Abstract of built paper."
     assert paper.is_open_access
-    assert paper.publication_date == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert paper.publication_date == datetime(2025, 1, 1, tzinfo=UTC)
 
 
 def test_build_paper_no_metadata(monkeypatch):
