@@ -145,7 +145,7 @@ async def search_web(
         successful_extractions = 0
 
         for meta, response in zip(results, responses, strict=False):
-            if isinstance(response, Exception):
+            if isinstance(response, BaseException):
                 continue
 
             # Extract main text content
@@ -282,7 +282,7 @@ async def search_and_chunk(
         all_chunks: list[dict[str, Any]] = []
 
         for meta, response in zip(results, responses, strict=False):
-            if isinstance(response, Exception):
+            if isinstance(response, BaseException):
                 continue
 
             extracted = trafilatura.extract(
@@ -387,7 +387,7 @@ def _run_markdown_chunker(
             try:
                 from chonkie.chunker.markdown import MarkdownParser  # type: ignore
             except Exception:
-                MarkdownParser = None  # type: ignore
+                MarkdownParser = None
         try:
             from chonkie import MarkdownChunker  # type: ignore
         except Exception:
@@ -417,10 +417,10 @@ def _run_markdown_chunker(
                 parser.parse(markdown_text)
                 if hasattr(parser, "parse")
                 else parser(markdown_text)
-            )  # type: ignore
+            )
             # If the parser returns list of dicts already, pass-through
             if isinstance(result, list) and (not result or isinstance(result[0], dict)):
-                return result  # type: ignore
+                return result
             # Else, normalize below
             chunks = result
         except Exception:
@@ -441,11 +441,11 @@ def _run_markdown_chunker(
             clean_text=bool(clean_text),
         )
         if hasattr(chunker, "chunk"):
-            chunks = chunker.chunk(markdown_text)  # type: ignore
+            chunks = chunker.chunk(markdown_text)
         elif hasattr(chunker, "split_text"):
-            chunks = chunker.split_text(markdown_text)  # type: ignore
+            chunks = chunker.split_text(markdown_text)
         elif callable(chunker):
-            chunks = chunker(markdown_text)  # type: ignore
+            chunks = chunker(markdown_text)
         else:
             return [{"error": "Unknown MarkdownChunker interface"}]
 

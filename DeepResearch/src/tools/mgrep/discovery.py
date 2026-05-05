@@ -95,9 +95,10 @@ class IgnoreMatcher:
         normalized = relative_path.as_posix().lstrip("./")
         if not normalized:
             return False
-        if hasattr(self._matcher, "match_file"):
-            return bool(self._matcher.match_file(normalized))
-        return bool(self._matcher.match(normalized, is_dir=is_dir))
+        matcher: Any = self._matcher
+        if hasattr(matcher, "match_file"):
+            return bool(matcher.match_file(normalized))
+        return bool(matcher.match(normalized, is_dir=is_dir))
 
 
 def compute_file_digest(path: Path) -> str:

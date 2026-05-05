@@ -28,7 +28,8 @@ class MilvusVectorStore(VectorStore):
 
         # Connect to Milvus
         self._client = pymilvus.MilvusClient(
-            uri=self.config.uri, token=self.config.token or self.config.api_key
+            uri=self.config.uri,
+            token=self.config.token or self.config.api_key or "",
         )
         self._ensure_collection()
 

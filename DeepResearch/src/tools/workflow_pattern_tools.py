@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from typing import Any
+from typing import Any, cast
 
 from omegaconf import OmegaConf
 
@@ -166,8 +166,9 @@ class WorkflowPatternToolRunner(ToolRunner):
         agent_types: dict[str, AgentType] = {}
         for index, item in enumerate(agents_data):
             if isinstance(item, dict):
-                agent_id = str(item.get("id") or item.get("agent_id") or "")
-                type_value = item.get("type") or item.get("agent_type")
+                row = cast("dict[str, Any]", item)
+                agent_id = str(row.get("id") or row.get("agent_id") or "")
+                type_value = row.get("type") or row.get("agent_type")
             else:
                 agent_id = str(item)
                 type_value = configured_types.get(agent_id)

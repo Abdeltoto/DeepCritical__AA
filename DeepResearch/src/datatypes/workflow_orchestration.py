@@ -14,6 +14,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class WorkflowType(str, Enum):
     """Types of workflows that can be orchestrated."""
@@ -107,7 +109,9 @@ class AgentConfig(BaseModel):
 
     agent_id: str = Field(..., description="Unique agent identifier")
     role: AgentRole = Field(..., description="Agent role")
-    model_name: str = Field("anthropic:claude-sonnet-4-0", description="Model to use")
+    model_name: str = Field(
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use"
+    )
     system_prompt: str | None = Field(None, description="Custom system prompt")
     tools: list[str] = Field(default_factory=list, description="Available tools")
     max_iterations: int = Field(10, description="Maximum iterations")
@@ -194,7 +198,9 @@ class JudgeConfig(BaseModel):
 
     judge_id: str = Field(..., description="Judge identifier")
     name: str = Field(..., description="Judge name")
-    model_name: str = Field("anthropic:claude-sonnet-4-0", description="Model to use")
+    model_name: str = Field(
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use"
+    )
     evaluation_criteria: list[str] = Field(..., description="Evaluation criteria")
     scoring_scale: str = Field("1-10", description="Scoring scale")
     enabled: bool = Field(True, description="Whether judge is enabled")
@@ -423,6 +429,9 @@ class MultiAgentCoordinationResult(BaseModel):
         default_factory=dict, description="Individual agent results"
     )
     consensus_score: float = Field(0.0, description="Consensus score")
+    error_message: str | None = Field(
+        None, description="Structured error when success is False"
+    )
 
 
 class JudgeEvaluationRequest(BaseModel):
@@ -448,6 +457,9 @@ class JudgeEvaluationResult(BaseModel):
     feedback: str = Field(..., description="Detailed feedback")
     recommendations: list[str] = Field(
         default_factory=list, description="Improvement recommendations"
+    )
+    error_message: str | None = Field(
+        None, description="Structured error when evaluation fails"
     )
 
     model_config = ConfigDict(json_schema_extra={})
@@ -531,7 +543,7 @@ class AgentOrchestratorConfig(BaseModel):
         AgentRole.ORCHESTRATOR_AGENT, description="Role of the orchestrator agent"
     )
     model_name: str = Field(
-        "anthropic:claude-sonnet-4-0", description="Model for the orchestrator"
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model for the orchestrator"
     )
     break_conditions: list[BreakCondition] = Field(
         default_factory=list, description="Break conditions"

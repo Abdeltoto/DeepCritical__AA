@@ -10,18 +10,21 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar, cast
 
-# Optional import for pydantic_graph
 try:
     from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
 except ImportError:
-    # Create placeholder classes for when pydantic_graph is not available
-    from typing import Generic, TypeVar
-
+    # First type parameter named ``T`` for compatibility with fallback unit tests.
     T = TypeVar("T")
+    _DepsT = TypeVar("_DepsT")
+    _OutT = TypeVar("_OutT")
 
-    class BaseNode(Generic[T]):
+    class BaseNode(Generic[T, _DepsT, _OutT]):
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class Edge:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -34,10 +37,6 @@ except ImportError:
             pass
 
     class GraphRunContext:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class Edge:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -159,7 +158,7 @@ def _store_interaction_summary(
     """Store runtime summary without replacing real metrics objects."""
     state.interaction_summary = summary
     if not isinstance(getattr(state, "metrics", None), InteractionMetrics):
-        state.metrics = summary
+        state.metrics = cast("InteractionMetrics", summary)
 
 
 def _get_orchestrator_errors(orchestrator: WorkflowOrchestrator) -> list[str]:
@@ -182,7 +181,7 @@ def _len_or_none(value: Any) -> int | None:
 
 
 @dataclass
-class InitializePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class InitializePattern(BaseNode[WorkflowPatternState, None, str]):
     """Initialize workflow pattern execution."""
 
     async def run(
@@ -253,7 +252,7 @@ class InitializePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsuppo
 
 
 @dataclass
-class SetupAgents(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class SetupAgents(BaseNode[WorkflowPatternState, None, str]):
     """Set up agents for interaction."""
 
     async def run(
@@ -294,7 +293,7 @@ class SetupAgents(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-b
 
 
 @dataclass
-class ExecuteCollaborativePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ExecuteCollaborativePattern(BaseNode[WorkflowPatternState, None, str]):
     """Execute collaborative interaction pattern."""
 
     async def run(
@@ -329,7 +328,7 @@ class ExecuteCollaborativePattern(BaseNode[WorkflowPatternState]):  # type: igno
 
 
 @dataclass
-class ExecuteSequentialPattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ExecuteSequentialPattern(BaseNode[WorkflowPatternState, None, str]):
     """Execute sequential interaction pattern."""
 
     async def run(
@@ -364,7 +363,7 @@ class ExecuteSequentialPattern(BaseNode[WorkflowPatternState]):  # type: ignore[
 
 
 @dataclass
-class ExecuteHierarchicalPattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ExecuteHierarchicalPattern(BaseNode[WorkflowPatternState, None, str]):
     """Execute hierarchical interaction pattern."""
 
     async def run(
@@ -402,7 +401,7 @@ class ExecuteHierarchicalPattern(BaseNode[WorkflowPatternState]):  # type: ignor
 
 
 @dataclass
-class ProcessCollaborativeResults(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ProcessCollaborativeResults(BaseNode[WorkflowPatternState, None, str]):
     """Process results from collaborative pattern."""
 
     async def run(
@@ -458,7 +457,7 @@ class ProcessCollaborativeResults(BaseNode[WorkflowPatternState]):  # type: igno
 
 
 @dataclass
-class ProcessSequentialResults(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ProcessSequentialResults(BaseNode[WorkflowPatternState, None, str]):
     """Process results from sequential pattern."""
 
     async def run(
@@ -503,7 +502,7 @@ class ProcessSequentialResults(BaseNode[WorkflowPatternState]):  # type: ignore[
 
 
 @dataclass
-class ProcessHierarchicalResults(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ProcessHierarchicalResults(BaseNode[WorkflowPatternState, None, str]):
     """Process results from hierarchical pattern."""
 
     async def run(
@@ -561,7 +560,7 @@ class ProcessHierarchicalResults(BaseNode[WorkflowPatternState]):  # type: ignor
 
 
 @dataclass
-class ValidateConsensus(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ValidateConsensus(BaseNode[WorkflowPatternState, None, str]):
     """Validate consensus results."""
 
     async def run(
@@ -591,7 +590,7 @@ class ValidateConsensus(BaseNode[WorkflowPatternState]):  # type: ignore[unsuppo
 
 
 @dataclass
-class ValidateResults(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ValidateResults(BaseNode[WorkflowPatternState, None, str]):
     """Validate pattern execution results."""
 
     async def run(
@@ -641,12 +640,12 @@ class ValidateResults(BaseNode[WorkflowPatternState]):  # type: ignore[unsupport
 
 
 @dataclass
-class FinalizePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class FinalizePattern(BaseNode[WorkflowPatternState, None, str]):
     """Finalize pattern execution."""
 
     async def run(
         self, ctx: GraphRunContext[WorkflowPatternState]
-    ) -> Annotated[End[str], Edge(label="done")]:
+    ) -> Annotated[End[str], Edge(label="done")] | PatternError:
         """Finalize the pattern execution."""
         try:
             # Update final metrics
@@ -737,7 +736,7 @@ class FinalizePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupport
 
 
 @dataclass
-class PatternError(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class PatternError(BaseNode[WorkflowPatternState, None, str]):
     """Handle pattern execution errors."""
 
     async def run(
@@ -775,7 +774,7 @@ class PatternError(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-
 
 
 @dataclass
-class ExecutePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupported-base]
+class ExecutePattern(BaseNode[WorkflowPatternState, None, str]):
     """Execute the appropriate pattern based on configuration."""
 
     async def run(
@@ -802,7 +801,7 @@ class ExecutePattern(BaseNode[WorkflowPatternState]):  # type: ignore[unsupporte
 # --- Workflow Graph Creation ---
 
 
-def create_collaborative_pattern_graph() -> Graph[WorkflowPatternState]:
+def create_collaborative_pattern_graph() -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for collaborative pattern execution."""
     return create_supported_pattern_graph()
 
@@ -826,20 +825,23 @@ def create_supported_pattern_graph() -> Graph[WorkflowPatternState]:
             PatternError(),
         ],
         state_type=WorkflowPatternState,
+        run_end_type=str,
     )
 
 
-def create_sequential_pattern_graph() -> Graph[WorkflowPatternState]:
+def create_sequential_pattern_graph() -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for sequential pattern execution."""
     return create_supported_pattern_graph()
 
 
-def create_hierarchical_pattern_graph() -> Graph[WorkflowPatternState]:
+def create_hierarchical_pattern_graph() -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for hierarchical pattern execution."""
     return create_supported_pattern_graph()
 
 
-def create_pattern_graph(pattern: InteractionPattern) -> Graph[WorkflowPatternState]:
+def create_pattern_graph(
+    pattern: InteractionPattern,
+) -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for the given interaction pattern."""
 
     if pattern not in SUPPORTED_WORKFLOW_PATTERNS:
@@ -870,7 +872,7 @@ async def run_collaborative_pattern_workflow(
     )
 
     graph = create_collaborative_pattern_graph()
-    result = await graph.run(InitializePattern(), state=state)
+    result = await graph.run(InitializePattern(), state=state, deps=None)
     return result.output
 
 
@@ -893,7 +895,7 @@ async def run_sequential_pattern_workflow(
     )
 
     graph = create_sequential_pattern_graph()
-    result = await graph.run(InitializePattern(), state=state)
+    result = await graph.run(InitializePattern(), state=state, deps=None)
     return result.output
 
 
@@ -918,7 +920,7 @@ async def run_hierarchical_pattern_workflow(
     )
 
     graph = create_hierarchical_pattern_graph()
-    result = await graph.run(InitializePattern(), state=state)
+    result = await graph.run(InitializePattern(), state=state, deps=None)
     return result.output
 
 
@@ -942,7 +944,7 @@ async def run_pattern_workflow(
     )
 
     graph = create_pattern_graph(pattern)
-    result = await graph.run(InitializePattern(), state=state)
+    result = await graph.run(InitializePattern(), state=state, deps=None)
     return result.output
 
 

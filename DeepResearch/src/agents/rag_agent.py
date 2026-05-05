@@ -7,9 +7,9 @@ that integrates with the existing DeepCritical agent system and vector stores.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 from omegaconf import DictConfig
 
@@ -24,11 +24,10 @@ from ..datatypes.rag import (
     VectorStoreConfig,
 )
 from ..vector_stores import create_vector_store
-from .research_agent import ResearchAgent
 
 
 @dataclass
-class RAGAgent(ResearchAgent):
+class RAGAgent:
     """RAG Agent for retrieval-augmented generation tasks."""
 
     def __init__(
@@ -37,7 +36,7 @@ class RAGAgent(ResearchAgent):
         vector_store_config: VectorStoreConfig | None = None,
         embeddings: Embeddings | None = None,
     ):
-        super().__init__(cfg)
+        self.cfg = cfg
         self.agent_type = "rag"
         self.vector_store: VectorStore | None = None
         self.embeddings: Embeddings | None = embeddings
@@ -148,19 +147,19 @@ Note: This is a basic implementation. A full RAG system would use an LLM to gene
 
         return "\n".join(context_parts)
 
-    def add_documents(self, documents: list[Document]) -> bool:
+    async def add_documents(self, documents: list[Document]) -> bool:
         """Add documents to the vector store."""
         if not self.vector_store:
             raise ValueError("Vector store not configured")
 
         try:
-            self.vector_store.add_documents(documents)
+            await self.vector_store.add_documents(documents)
             return True
         except Exception as e:
             print(f"Error adding documents: {e}")
             return False
 
-    def add_document_chunks(self, chunks: list[Document]) -> bool:
+    async def add_document_chunks(self, chunks: list[Document]) -> bool:
         """Add document chunks to the vector store."""
         if not self.vector_store:
             raise ValueError("Vector store not configured")
@@ -168,7 +167,7 @@ Note: This is a basic implementation. A full RAG system would use an LLM to gene
         try:
             # Convert Document chunks to proper format if needed
             # Assuming chunks are Document objects with chunked content
-            self.vector_store.add_documents(chunks)
+            await self.vector_store.add_documents(chunks)
             return True
         except Exception as e:
             print(f"Error adding document chunks: {e}")

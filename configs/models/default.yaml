@@ -2,6 +2,10 @@
 
 version: 1
 
+# Default for DeepResearch.src.utils.vllm_client.VLLMClient.transport_mode (simulate is CI-safe).
+vllm_client_defaults:
+  transport_mode: simulate
+
 default_models:
   llm: default_chat
   embedding: default_embedding

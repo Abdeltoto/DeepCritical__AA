@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast
+
 from DeepResearch.src.datatypes.pydantic_ai_tools import (
     CodeExecBuiltinRunner,
     UrlContextBuiltinRunner,
@@ -15,10 +18,16 @@ from DeepResearch.src.utils.pydantic_ai_utils import get_pydantic_ai_config as _
 from DeepResearch.src.utils.pydantic_ai_utils import run_agent_sync as _run_sync
 
 # Registry overrides and additions
-from .base import registry
+from .base import ToolRunner, registry
 
-registry.register("pyd_code_exec", lambda: CodeExecBuiltinRunner())
-registry.register("pyd_url_context", lambda: UrlContextBuiltinRunner())
+registry.register(
+    "pyd_code_exec",
+    cast("Callable[[], ToolRunner]", lambda: CodeExecBuiltinRunner()),
+)
+registry.register(
+    "pyd_url_context",
+    cast("Callable[[], ToolRunner]", lambda: UrlContextBuiltinRunner()),
+)
 
 # Export the functions for external use
 __all__ = [

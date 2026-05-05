@@ -19,6 +19,7 @@ from DeepResearch.src.agents.code_generation_agent import (
 )
 from DeepResearch.src.datatypes.agent_framework_types import AgentRunResponse
 from DeepResearch.src.datatypes.agents import AgentDependencies, AgentResult, AgentType
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.statemachines.code_execution_workflow import CodeExecutionWorkflow
 from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
@@ -177,7 +178,7 @@ class CodeExecutionOrchestrator:
                 metadata={
                     "orchestrator": "code_execution",
                     "generation_model": self._resolve_generation_model(),
-                    "execution_config": self.config.dict(),
+                    "execution_config": self.config.model_dump(),
                 },
                 error=None,
                 execution_time=execution_time,
@@ -459,7 +460,7 @@ class CodeExecutionOrchestrator:
 
     def get_config(self) -> dict[str, Any]:
         """Get current configuration."""
-        return self.config.dict()
+        return self.config.model_dump()
 
 
 # Convenience functions for common use cases

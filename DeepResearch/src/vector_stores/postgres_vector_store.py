@@ -19,11 +19,12 @@ from .postgres_config import PostgresVectorStoreConfig
 class PostgresVectorStore(VectorStore):
     """Postgres-backed vector store (using pgvector) with async-compatible methods."""
 
+    config: PostgresVectorStoreConfig
+
     def __init__(self, config: VectorStoreConfig, embeddings: Embeddings):
-        super().__init__(config, embeddings)
         if not isinstance(config, PostgresVectorStoreConfig):
             raise TypeError("config must be an instance of PostgresVectorStoreConfig")
-
+        super().__init__(config, embeddings)
         self.config = config
         self._pool = None
 
@@ -89,9 +90,9 @@ class PostgresVectorStore(VectorStore):
             query = f"""
                 INSERT INTO {self._safe_table_name} (id, content, metadata, embedding)
                 VALUES ($1, $2, $3::jsonb, $4::vector)
-                ON CONFLICT (id) DO UPDATE 
-                SET content = EXCLUDED.content, 
-                    metadata = EXCLUDED.metadata, 
+                ON CONFLICT (id) DO UPDATE
+                SET content = EXCLUDED.content,
+                    metadata = EXCLUDED.metadata,
                     embedding = EXCLUDED.embedding
             """
             await conn.executemany(query, records)

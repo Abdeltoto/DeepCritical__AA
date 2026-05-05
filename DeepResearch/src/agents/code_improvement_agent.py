@@ -15,6 +15,7 @@ from pydantic_ai import Agent
 
 from DeepResearch.src.datatypes.agents import AgentResult, AgentType
 from DeepResearch.src.datatypes.coding_base import CodeBlock
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.code_exec import CodeExecPrompts
 from DeepResearch.src.utils.code_utils import infer_lang
 from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model

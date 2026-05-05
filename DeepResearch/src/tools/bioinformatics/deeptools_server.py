@@ -42,6 +42,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class DeeptoolsServer(MCPServerBase):
@@ -175,9 +178,9 @@ class DeeptoolsServer(MCPServerBase):
         if verbose:
             cmd.append("-v")
 
-        # Check if deeptools is available
-        if not shutil.which("computeGCBias"):
-            return {
+        miss = response_if_executable_missing(
+            "computeGCBias",
+            {
                 "success": True,
                 "command_executed": "computeGCBias [mock - tool not available]",
                 "stdout": "Mock output for computeGCBias operation",
@@ -187,7 +190,10 @@ class DeeptoolsServer(MCPServerBase):
                 ),
                 "exit_code": 0,
                 "mock": True,
-            }
+            },
+        )
+        if miss is not None:
+            return miss
 
         try:
             result = subprocess.run(
@@ -335,9 +341,9 @@ class DeeptoolsServer(MCPServerBase):
         if verbose:
             cmd.append("-v")
 
-        # Check if deeptools is available
-        if not shutil.which("correctGCBias"):
-            return {
+        miss = response_if_executable_missing(
+            "correctGCBias",
+            {
                 "success": True,
                 "command_executed": "correctGCBias [mock - tool not available]",
                 "stdout": "Mock output for correctGCBias operation",
@@ -345,7 +351,10 @@ class DeeptoolsServer(MCPServerBase):
                 "output_files": [corrected_file],
                 "exit_code": 0,
                 "mock": True,
-            }
+            },
+        )
+        if miss is not None:
+            return miss
 
         try:
             result = subprocess.run(
@@ -1231,5 +1240,14 @@ class DeeptoolsServer(MCPServerBase):
             }
 
 
-# Create server instance
-deeptools_server = DeeptoolsServer()
+def get_deeptools_server() -> DeeptoolsServer:
+    """Create a Deeptools server instance (lazy).
+
+    Avoid import-time side effects during unit test collection.
+    """
+
+    return DeeptoolsServer()
+
+
+# Backwards-compatible module attribute expected by tests/importers.
+deeptools_server = get_deeptools_server()

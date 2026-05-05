@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from omegaconf import OmegaConf
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents.workflow_pattern_agents import (
@@ -26,6 +27,7 @@ from .agents.workflow_pattern_agents import (
     create_sequential_agent,
 )
 from .datatypes.agents import AgentDependencies, AgentType
+from .datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 
 # Import all the core components
 from .datatypes.workflow_patterns import (
@@ -91,7 +93,7 @@ class AgentExecutorRegistry:
         """Get an agent executor."""
         return self._executors.get(agent_id)
 
-    def list(self) -> list[str]:
+    def list_agent_ids(self) -> list[str]:
         """List all registered agent IDs."""
         return list(self._executors.keys())
 
@@ -213,7 +215,7 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute collaborative pattern workflow."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
         config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
@@ -233,7 +235,7 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute sequential pattern workflow."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
         config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
@@ -254,7 +256,7 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute hierarchical pattern workflow."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
         config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
@@ -276,7 +278,7 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute workflow with specified pattern."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
         config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None

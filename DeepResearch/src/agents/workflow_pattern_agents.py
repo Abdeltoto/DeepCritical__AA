@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 
 from DeepResearch.agents import BaseAgent  # Use top-level BaseAgent to satisfy linters
 from DeepResearch.src.datatypes.agents import AgentDependencies, AgentResult, AgentType
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.workflow_patterns import InteractionPattern
 from DeepResearch.src.prompts.workflow_pattern_agents import WorkflowPatternAgentPrompts
 from DeepResearch.src.statemachines.workflow_pattern_statemachines import (

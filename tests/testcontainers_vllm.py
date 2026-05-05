@@ -14,7 +14,7 @@ from typing import Any, TypedDict
 try:
     from testcontainers.vllm import VLLMContainer  # type: ignore
 except ImportError:
-    VLLMContainer = None  # type: ignore
+    VLLMContainer = None
 from omegaconf import DictConfig
 
 

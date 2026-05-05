@@ -6,7 +6,7 @@ import pickle
 from pathlib import Path
 from typing import Any
 
-import faiss  # type: ignore
+import faiss
 import numpy as np
 
 from ..datatypes.rag import (
@@ -69,8 +69,8 @@ class FAISSVectorStore(VectorStore):
 
     def _build_base_index(self, dimension: int) -> Any:
         if self._uses_cosine_metric():
-            return faiss.IndexFlatIP(dimension)  # type: ignore
-        return faiss.IndexFlatL2(dimension)  # type: ignore
+            return faiss.IndexFlatIP(dimension)
+        return faiss.IndexFlatL2(dimension)
 
     def _to_user_score(self, raw_score: float) -> float:
         if self._uses_cosine_metric():
@@ -100,7 +100,7 @@ class FAISSVectorStore(VectorStore):
         if data_dir:
             os.makedirs(data_dir, exist_ok=True)
         if self.index:
-            faiss.write_index(self.index, self.index_path)  # type: ignore
+            faiss.write_index(self.index, self.index_path)
         with open(self.data_path, "wb") as f:
             pickle.dump(
                 {"documents": self.documents, "doc_ids": self.doc_ids},
@@ -128,7 +128,7 @@ class FAISSVectorStore(VectorStore):
 
         dimension = vectors.shape[1]
         self.index = self._build_base_index(dimension)
-        self.index.add(vectors)  # type: ignore
+        self.index.add(vectors)
 
     def clear(self) -> None:
         """Reset in-memory state and remove any persisted FAISS artifacts."""
@@ -171,7 +171,7 @@ class FAISSVectorStore(VectorStore):
             dimension = new_vectors.shape[1]
             self.index = self._build_base_index(dimension)
 
-        self.index.add(new_vectors)  # type: ignore
+        self.index.add(new_vectors)
 
         self._save()
         return doc_ids
@@ -286,7 +286,7 @@ class FAISSVectorStore(VectorStore):
         if self._uses_cosine_metric():
             query_vector = self._normalize_vectors(query_vector)
 
-        distances, indices = self.index.search(query_vector, top_k)  # type: ignore
+        distances, indices = self.index.search(query_vector, top_k)
 
         results = []
         for i in range(len(indices[0])):

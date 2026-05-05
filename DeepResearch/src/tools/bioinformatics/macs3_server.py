@@ -32,6 +32,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerType,
     MCPToolSpec,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class MACS3Server(MCPServerBase):
@@ -99,21 +102,21 @@ class MACS3Server(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if tool is available (for testing/development environments)
-            if not shutil.which("macs3"):
-                # Return mock success result for testing when tool is not available
-                mock_output_files = self._get_mock_output_files(
-                    operation, method_params
-                )
-                return {
+            mock_output_files = self._get_mock_output_files(operation, method_params)
+            miss = response_if_executable_missing(
+                "macs3",
+                {
                     "success": True,
                     "command_executed": f"macs3 {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
                     "stderr": "",
                     "output_files": mock_output_files,
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             return method(**method_params)

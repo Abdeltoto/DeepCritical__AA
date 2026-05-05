@@ -8,7 +8,7 @@ data processing, fusion, and reasoning tasks.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from pydantic_ai import Agent
 
@@ -22,6 +22,7 @@ from DeepResearch.src.datatypes.bioinformatics import (
     ReasoningResult,
     ReasoningTask,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.bioinformatics_agents import BioinformaticsAgentPrompts
 from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
@@ -224,7 +225,9 @@ class BioinformaticsAgent:
         model_role: str = "bioinformatics_reasoning",
         config: Mapping[str, Any] | None = None,
     ):
-        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_name = cast(
+            "str", model_name or resolve_pydantic_ai_model(config, model_role)
+        )
         self.orchestrator = AgentOrchestrator(
             self.model_name, model_role=model_role, config=config
         )
@@ -265,7 +268,9 @@ class AgentOrchestrator:
         model_role: str = "bioinformatics_reasoning",
         config: Mapping[str, Any] | None = None,
     ):
-        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_name = cast(
+            "str", model_name or resolve_pydantic_ai_model(config, model_role)
+        )
         self.fusion_agent = DataFusionAgent(
             self.model_name, model_role=model_role, config=dict(config or {})
         )

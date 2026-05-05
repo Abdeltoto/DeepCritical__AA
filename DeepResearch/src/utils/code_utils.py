@@ -391,7 +391,11 @@ def execute_code(
         if original_filename is None:
             Path(filepath).unlink(missing_ok=True)
         if result.returncode:
-            logs = result.stderr
+            logs = (
+                result.stderr.decode("utf-8", errors="replace")
+                if isinstance(result.stderr, bytes)
+                else str(result.stderr)
+            )
             if original_filename is None:
                 abs_path = str(pathlib.Path(filepath).absolute())
                 logs = logs.replace(str(abs_path), "").replace(filename, "")
@@ -399,7 +403,11 @@ def execute_code(
                 abs_path = str(pathlib.Path(work_dir).absolute()) + PATH_SEPARATOR
                 logs = logs.replace(str(abs_path), "")
         else:
-            logs = result.stdout
+            logs = (
+                result.stdout.decode("utf-8", errors="replace")
+                if isinstance(result.stdout, bytes)
+                else str(result.stdout)
+            )
         return result.returncode, logs, None
 
     # create a docker client
@@ -542,9 +550,10 @@ def eval_function_completions(
             "expected_success": 1 - pow(1 - sum(success_list) / n, n),
             "success": any(s for s in success_list),
         }
-    if callable(assertions) and n > 1:
+    if n > 1 and assertions is not None and not isinstance(assertions, str):
         # assertion generator
-        assertions, gen_cost = assertions(definition)
+        assertion_fn = assertions
+        assertions, gen_cost = assertion_fn(definition)
     else:
         assertions, gen_cost = None, 0
     if n > 1 or test is None:

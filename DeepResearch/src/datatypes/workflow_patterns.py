@@ -670,92 +670,10 @@ def create_workflow_orchestrator(
 
 
 # Integration with existing DeepCritical components
-class WorkflowPatternNode(BaseNode[DeepAgentState]):  # type: ignore[unsupported-base]
-    """Base node for workflow pattern execution."""
-
-    def __init__(self, pattern: InteractionPattern):
-        self.pattern = pattern
-
-    async def run(self, ctx: GraphRunContext[DeepAgentState]) -> Any:
-        """Execute the workflow pattern."""
-        # This would be implemented by specific pattern nodes
-
-
-class CollaborativePatternNode(WorkflowPatternNode):
-    """Node for collaborative interaction pattern."""
-
-    def __init__(self):
-        super().__init__(InteractionPattern.COLLABORATIVE)
-
-    async def run(self, ctx: GraphRunContext[DeepAgentState]) -> Any:
-        """Execute collaborative pattern."""
-        # Get active agents from context
-        active_agents = ctx.state.active_tasks  # This would need to be adapted
-
-        # Create interaction state
-        interaction_state = create_interaction_state(
-            pattern=self.pattern,
-            agents=active_agents,
-        )
-
-        # Create orchestrator
-        orchestrator = create_workflow_orchestrator(interaction_state)
-
-        # Execute pattern
-        result = await orchestrator.execute_collaborative_pattern()
-
-        # Update context state
-        ctx.state.shared_state["interaction_result"] = result
-        ctx.state.shared_state["interaction_summary"] = interaction_state.get_summary()
-
-        return result
-
-
-class SequentialPatternNode(WorkflowPatternNode):
-    """Node for sequential interaction pattern."""
-
-    def __init__(self):
-        super().__init__(InteractionPattern.SEQUENTIAL)
-
-    async def run(self, ctx: GraphRunContext[DeepAgentState]) -> Any:
-        """Execute sequential pattern."""
-        # Get agents in order
-        agent_order = list(ctx.state.active_tasks)
-
-        # Create interaction state
-        interaction_state = create_interaction_state(
-            pattern=self.pattern,
-            agents=agent_order,
-        )
-
-        # Create orchestrator
-        orchestrator = create_workflow_orchestrator(interaction_state)
-
-        # Execute pattern
-        result = await orchestrator.execute_sequential_pattern()
-
-        # Update context state
-        ctx.state.shared_state["interaction_result"] = result
-        ctx.state.shared_state["interaction_summary"] = interaction_state.get_summary()
-
-        return result
-
-
-# Utility functions for integration
-def create_pattern_graph(
-    pattern: InteractionPattern, _agents: list[str]
-) -> Graph[DeepAgentState]:
-    """Create a Pydantic Graph for the given interaction pattern."""
-
-    if pattern == InteractionPattern.COLLABORATIVE:
-        nodes = [CollaborativePatternNode()]
-    elif pattern == InteractionPattern.SEQUENTIAL:
-        nodes = [SequentialPatternNode()]
-    else:
-        # Default to collaborative
-        nodes = [CollaborativePatternNode()]
-
-    return Graph(nodes=nodes, state_type=DeepAgentState)
+#
+# NOTE: The graph/node integration below was a stub and caused type-checking
+# issues due to ambiguous `BaseNode`/`Graph` imports. The runtime integration
+# point for interaction patterns is `execute_interaction_pattern()` above.
 
 
 async def execute_interaction_pattern(
@@ -816,16 +734,12 @@ __all__ = [
     "AgentInteractionRequest",
     "AgentInteractionResponse",
     "AgentInteractionState",
-    "CollaborativePatternNode",
     "InteractionConfig",
     "InteractionMessage",
     "InteractionPattern",
     "MessageType",
-    "SequentialPatternNode",
     "WorkflowOrchestrator",
-    "WorkflowPatternNode",
     "create_interaction_state",
-    "create_pattern_graph",
     "create_workflow_orchestrator",
     "execute_interaction_pattern",
 ]

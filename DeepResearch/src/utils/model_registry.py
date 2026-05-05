@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from DeepResearch.src.datatypes.llm_models import LLMModelConfig, LLMProvider
+from DeepResearch.src.datatypes.llm_models import (
+    DEFAULT_PYDANTIC_AI_MODEL,
+    LLMModelConfig,
+    LLMProvider,
+)
 from DeepResearch.src.datatypes.model_registry import (
     EmbeddingModelSpec,
     LLMModelSpec,
@@ -20,8 +24,6 @@ from DeepResearch.src.datatypes.rag import (
     VLLMConfig,
 )
 
-DEFAULT_PYDANTIC_AI_MODEL = "anthropic:claude-sonnet-4-0"
-
 DEFAULT_REGISTRY_DATA: dict[str, Any] = {
     "version": 1,
     "default_models": {
@@ -33,7 +35,7 @@ DEFAULT_REGISTRY_DATA: dict[str, Any] = {
         "default_chat": {
             "kind": "llm",
             "runtime": "pydantic_ai",
-            "provider": "anthropic",
+            "provider": LLMProvider.ANTHROPIC.value,
             "model_name": DEFAULT_PYDANTIC_AI_MODEL,
         },
         "search_chat": {
@@ -155,7 +157,9 @@ def to_plain_mapping(value: Any) -> dict[str, Any]:
 
         if OmegaConf.is_config(value):
             converted = OmegaConf.to_container(value, resolve=True)
-            return dict(converted) if isinstance(converted, Mapping) else {}
+            if isinstance(converted, Mapping):
+                return {str(k): v for k, v in converted.items()}
+            return {}
     except Exception:
         pass
 
@@ -307,11 +311,14 @@ def resolve_model_name(
 
 def embedding_spec_to_config(spec: EmbeddingModelSpec) -> EmbeddingsConfig:
     """Convert a registry embedding spec to the existing RAG embedding config."""
+    from pydantic import HttpUrl
+
+    base: HttpUrl | None = HttpUrl(spec.base_url) if spec.base_url else None
     return EmbeddingsConfig(
         model_type=spec.model_type,
         model_name=spec.model_name,
         api_key=spec.api_key,
-        base_url=spec.base_url,
+        base_url=base,
         num_dimensions=spec.num_dimensions,
         batch_size=spec.batch_size,
         max_retries=spec.max_retries,

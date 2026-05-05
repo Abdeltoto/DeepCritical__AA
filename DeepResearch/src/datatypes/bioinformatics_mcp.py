@@ -29,9 +29,14 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import Tool
+
+from DeepResearch.src.utils.model_registry import (
+    resolve_model_name,
+    resolve_pydantic_ai_model,
+)
 
 # Import DeepCritical types
 from .agents import AgentDependencies
@@ -63,6 +68,19 @@ if TYPE_CHECKING:
 
 # Type alias for MCP tool functions
 MCPToolFunc = Callable[..., Any]
+
+
+class ToolInfo(BaseModel):
+    """Internal registration info for an MCP tool."""
+
+    method: MCPToolFunc
+    # `pydantic_ai.tools.Tool` carries complex typing that can break schema rebuild
+    # on newer Python versions. Store as `Any` to keep runtime safe.
+    tool: Any
+    # Spec can be either this module's `ToolSpec` or `DeepResearch.src.datatypes.mcp.MCPToolSpec`.
+    spec: Any
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ToolSpec(BaseModel):
@@ -271,9 +289,10 @@ class MCPServerBase(ABC):
     def _initialize_pydantic_ai_agent(self):
         """Initialize Pydantic AI agent for this server."""
         try:
+            llm_model = resolve_pydantic_ai_model(None, "tool_use")
             # Create agent with tools
             self.pydantic_ai_agent = Agent(
-                model="anthropic:claude-sonnet-4-0",
+                model=llm_model,
                 tools=self.pydantic_ai_tools,
                 system_prompt=self._load_system_prompt(),
             )
@@ -282,7 +301,7 @@ class MCPServerBase(ABC):
             self.session = MCPAgentSession(
                 session_id=str(uuid.uuid4()),
                 agent_config=MCPAgentIntegration(
-                    agent_model="anthropic:claude-sonnet-4-0",
+                    agent_model=resolve_model_name(None, "tool_use"),
                     system_prompt=self._load_system_prompt(),
                     execution_timeout=300,
                 ),
@@ -304,13 +323,10 @@ class MCPServerBase(ABC):
             self.logger.warning("Failed to load system prompt: %s", e)
             return f"MCP Server: {self.name}"
 
-    def get_tool_spec(self, tool_name: str) -> ToolSpec | None:
+    def get_tool_spec(self, tool_name: str) -> MCPToolSpec | None:
         """Get the specification for a tool."""
-        if tool_name in self.tools:
-            tool_info = self.tools[tool_name]
-            if isinstance(tool_info, dict) and "spec" in tool_info:
-                return tool_info["spec"]
-        return None
+        tool_info = self.tools.get(tool_name)
+        return tool_info["spec"] if tool_info else None
 
     def list_tools(self) -> list[str]:
         """List all available tools."""
@@ -322,12 +338,8 @@ class MCPServerBase(ABC):
             msg = f"Tool '{tool_name}' not found"
             raise ValueError(msg)
 
-        tool_info = self.tools[tool_name]
-        if isinstance(tool_info, dict) and "method" in tool_info:
-            method = tool_info["method"]
-            return method(**kwargs)
-        msg = f"Tool '{tool_name}' is not properly registered"
-        raise ValueError(msg)
+        method = self.tools[tool_name]["method"]
+        return method(**kwargs)
 
     async def execute_tool_async(
         self, request: MCPToolExecutionRequest, ctx: MCPExecutionContext | None = None
@@ -413,7 +425,7 @@ class MCPServerBase(ABC):
             )
 
     def _validate_tool_parameters(
-        self, parameters: dict[str, Any], tool_spec: ToolSpec
+        self, parameters: dict[str, Any], tool_spec: ToolSpec | MCPToolSpec
     ):
         """Validate tool parameters against specification."""
         required_inputs = {

@@ -8,6 +8,7 @@ including configuration, inference, serving, attention, and multimodal capabilit
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -1250,7 +1251,7 @@ class AsyncLLMEngine(BaseModel):
             request_id="", prompt="", prompt_token_ids=[], outputs=[], finished=True
         )
 
-    def get_engine(self) -> LLMEngine:
+    def get_engine(self) -> LLMEngine | None:
         """Get the underlying engine."""
         if self.engine is None:
             self.engine = LLMEngine(self.config)
@@ -1534,7 +1535,7 @@ class CompletionChoice(BaseModel):
 class BatchRequest(BaseModel):
     """Batch processing request."""
 
-    requests: list[ChatCompletionRequest | CompletionRequest | EmbeddingRequest] = (
+    requests: Sequence[ChatCompletionRequest | CompletionRequest | EmbeddingRequest] = (
         Field(..., description="List of requests")
     )
     batch_id: str | None = Field(None, description="Batch identifier")

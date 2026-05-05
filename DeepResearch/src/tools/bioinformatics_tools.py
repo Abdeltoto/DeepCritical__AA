@@ -13,7 +13,7 @@ import io
 import zipfile
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 import requests
@@ -23,25 +23,24 @@ from limits.strategies import MovingWindowRateLimiter
 from pydantic import BaseModel, Field
 from requests.exceptions import RequestException
 
-from DeepResearch.src.agents.bioinformatics_agents import (
-    DataFusionResult,
-    ReasoningResult,
-)
 from DeepResearch.src.datatypes.bioinformatics import (
     DataFusionRequest,
+    DataFusionResult,
     DrugTarget,
     FusedDataset,
     GEOSeries,
     GOAnnotation,
     ProteinStructure,
     PubMedPaper,
+    ReasoningResult,
     ReasoningTask,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.statemachines.bioinformatics_workflow import (
     run_bioinformatics_workflow,
 )
 
-from ..utils.model_registry import DEFAULT_PYDANTIC_AI_MODEL, resolve_model_name
+from ..utils.model_registry import resolve_model_name
 
 # Note: defer decorator is not available in current pydantic-ai version
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
@@ -195,7 +194,7 @@ def _build_paper(pmid: int) -> PubMedPaper | None:
     try:
         # Attempt to parse the year, and create a datetime object
         year = int(pubdate_str.split()[0])
-        publication_date = datetime(year, 1, 1, tzinfo=timezone.utc)
+        publication_date = datetime(year, 1, 1, tzinfo=UTC)
     except (ValueError, IndexError):
         publication_date = None
 

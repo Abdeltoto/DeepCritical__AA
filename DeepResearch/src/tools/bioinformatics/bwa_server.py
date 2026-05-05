@@ -568,13 +568,14 @@ def bwa_bwasw(
 
 # Apply MCP decorators if FastMCP is available
 if mcp:
-    # Re-bind the functions with MCP decorators
-    bwa_index = mcp.tool()(bwa_index)  # type: ignore[assignment]
-    bwa_mem = mcp.tool()(bwa_mem)  # type: ignore[assignment]
-    bwa_aln = mcp.tool()(bwa_aln)  # type: ignore[assignment]
-    bwa_samse = mcp.tool()(bwa_samse)  # type: ignore[assignment]
-    bwa_sampe = mcp.tool()(bwa_sampe)  # type: ignore[assignment]
-    bwa_bwasw = mcp.tool()(bwa_bwasw)  # type: ignore[assignment]
+    # Register functions as MCP tools. We intentionally avoid rebinding the
+    # function names to the decorator return value to keep types stable.
+    mcp.tool()(bwa_index)
+    mcp.tool()(bwa_mem)
+    mcp.tool()(bwa_aln)
+    mcp.tool()(bwa_samse)
+    mcp.tool()(bwa_sampe)
+    mcp.tool()(bwa_bwasw)
 
 # Main execution
 if __name__ == "__main__":

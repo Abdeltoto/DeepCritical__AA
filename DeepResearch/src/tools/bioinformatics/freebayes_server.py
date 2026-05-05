@@ -20,6 +20,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class FreeBayesServer(MCPServerBase):
@@ -56,25 +59,25 @@ class FreeBayesServer(MCPServerBase):
         Returns:
             Dictionary containing execution results
         """
-        # Check if tool is available (for testing/development environments)
-        import shutil
-
         tool_name_check = "freebayes"
-        if not shutil.which(tool_name_check):
-            # Return mock success result for testing when tool is not available
-            operation = params.get("operation", "variant_calling")
-            vcf_output = params.get("vcf_output") or params.get(
-                "output_file", f"mock_{operation}_output.vcf"
-            )
-            return {
+        operation = params.get("operation", "variant_calling")
+        vcf_output = params.get("vcf_output") or params.get(
+            "output_file", f"mock_{operation}_output.vcf"
+        )
+        miss = response_if_executable_missing(
+            tool_name_check,
+            {
                 "success": True,
                 "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
                 "stdout": f"Mock output for {operation} operation",
                 "stderr": "",
                 "output_files": [vcf_output],
                 "exit_code": 0,
-                "mock": True,  # Indicate this is a mock result
-            }
+                "mock": True,
+            },
+        )
+        if miss is not None:
+            return miss
 
         # Handle backward compatibility with operation-based calls
         operation = params.get("operation")

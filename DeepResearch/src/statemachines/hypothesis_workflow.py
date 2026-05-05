@@ -4,7 +4,7 @@ Hypothesis generation and test-planning workflow.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -478,7 +478,7 @@ async def run_hypothesis_workflow(
         ),
     )
     workflow = create_hypothesis_workflow()
-    result = await workflow.run(ParseHypothesisRequest(), state=state)  # type: ignore[arg-type]
+    result = await cast("Any", workflow).run(ParseHypothesisRequest(), state=state)
     if not hasattr(result, "output") or not isinstance(result.output, dict):
         raise RuntimeError("Hypothesis workflow did not return a structured output")
     return result.output  # type: ignore[return-value]

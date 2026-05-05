@@ -9,6 +9,7 @@ and RAG workflows.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Any, cast
@@ -25,6 +26,7 @@ from .src.agents.deep_agent_implementations import (
     ResearchAgent,
     TaskOrchestrationAgent,
 )
+from .src.datatypes.agent_taxonomy import DEEP_AGENT_TYPES
 from .src.datatypes.agents import (
     AgentDependencies,
     AgentResult,
@@ -37,12 +39,15 @@ from .src.datatypes.bioinformatics import DataFusionRequest, FusedDataset, Reaso
 # Import DeepAgent components
 from .src.datatypes.deep_agent_state import DeepAgentState
 from .src.datatypes.deep_agent_types import AgentCapability
+from .src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from .src.datatypes.rag import RAGQuery, RAGResponse
 from .src.prompts.agents import AgentPrompts
 
 # Import existing tools and schemas
 from .src.tools.base import ExecutionResult, registry
 from .src.utils.model_registry import resolve_pydantic_ai_model
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -63,9 +68,11 @@ class BaseAgent(ABC):
         Creating a custom agent:
 
         ```python
+        from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
         class MyCustomAgent(BaseAgent):
             def __init__(self):
-                super().__init__(AgentType.CUSTOM, "anthropic:claude-sonnet-4-0")
+                super().__init__(AgentType.CUSTOM, DEFAULT_PYDANTIC_AI_MODEL)
 
             async def execute(
                 self, input_data: str, deps: AgentDependencies
@@ -93,6 +100,7 @@ class BaseAgent(ABC):
         self.status = AgentStatus.IDLE
         self.history = ExecutionHistory()
         self._agent: Agent[AgentDependencies, str] | None = None
+        self._initialization_error: str | None = None
 
         # Initialize Pydantic AI agent
         self._initialize_agent(system_prompt, instructions)
@@ -110,8 +118,12 @@ class BaseAgent(ABC):
             # Register tools
             self._register_tools()
 
-        except Exception:
+        except Exception as e:
+            logger.exception("Failed to initialize pydantic-ai Agent")
             self._agent = None
+            self._initialization_error = str(e)
+        else:
+            self._initialization_error = None
 
     def _get_default_system_prompt(self) -> str:
         """
@@ -225,9 +237,10 @@ class BaseAgent(ABC):
 
         try:
             if not self._agent:
+                detail = self._initialization_error or "Agent not properly initialized"
                 return AgentResult(
                     success=False,
-                    error="Agent not properly initialized",
+                    error=detail,
                     agent_type=self.agent_type,
                 )
 
@@ -267,7 +280,15 @@ class BaseAgent(ABC):
         self, input_data: Any, deps: AgentDependencies | None = None
     ) -> AgentResult:
         """Synchronous execution wrapper."""
-        return asyncio.run(self.execute(input_data, deps))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.execute(input_data, deps))
+        msg = (
+            "execute_sync() cannot be called from a running event loop. "
+            "Use `await execute(...)` instead."
+        )
+        raise RuntimeError(msg)
 
     def _process_result(self, result: Any) -> dict[str, Any]:
         """Process the result from Pydantic AI agent."""
@@ -353,10 +374,15 @@ class PlannerAgent(BaseAgent):
         ]
 
     def plan(self, parsed: dict[str, Any]) -> list[dict[str, Any]]:
-        """Legacy synchronous plan method."""
-        result = self.execute_sync(parsed)
-        if result.success and "steps" in result.data:
-            return result.data["steps"]
+        """Legacy synchronous plan method updated with exception handling."""
+        try:
+            result = self.execute_sync(parsed)
+            if result.success and "steps" in result.data:
+                return result.data["steps"]
+        except Exception:
+            # Optionally log:
+            # logger.warning("Synchronous planning failed, using default plan")
+            pass
         return self._get_default_plan(parsed.get("query", ""))
 
 
@@ -403,7 +429,10 @@ class ExecutorAgent(BaseAgent):
             while attempt <= self.retries:
                 try:
                     runner = registry.make(tool_name)
-                    result = runner.run(params)
+                    # Tool runners are synchronous; execute them in a worker thread
+                    # to avoid blocking the event loop and to isolate tools that
+                    # internally use asyncio.run().
+                    result = await asyncio.to_thread(runner.run, params)
                     history.record(
                         agent_type=AgentType.EXECUTOR,
                         result=AgentResult(
@@ -467,7 +496,15 @@ class ExecutorAgent(BaseAgent):
         self, plan: list[dict[str, Any]], history: ExecutionHistory
     ) -> dict[str, Any]:
         """Legacy synchronous run_plan method."""
-        return asyncio.run(self.execute_plan(plan, history))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.execute_plan(plan, history))
+        msg = (
+            "run_plan() cannot be called from a running event loop. "
+            "Use `await execute_plan(...)` instead."
+        )
+        raise RuntimeError(msg)
 
 
 class SearchAgent(BaseAgent):
@@ -1243,7 +1280,9 @@ class MultiAgentOrchestrator:
         self, question: str, _parsed: dict[str, Any], _plan: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Execute bioinformatics workflow."""
-        bioinformatics_agent = self.agents[AgentType.BIOINFORMATICS]
+        bioinformatics_agent = cast(
+            "BioinformaticsAgent", self.agents[AgentType.BIOINFORMATICS]
+        )
 
         # Create fusion request
         fusion_request = DataFusionRequest(
@@ -1254,9 +1293,7 @@ class MultiAgentOrchestrator:
         )
 
         # Fuse data
-        fused_dataset = await cast(
-            "BioinformaticsAgent", bioinformatics_agent
-        ).fuse_data(fusion_request)
+        fused_dataset = await bioinformatics_agent.fuse_data(fusion_request)
 
         # Create reasoning task
         reasoning_task = ReasoningTask(
@@ -1267,9 +1304,9 @@ class MultiAgentOrchestrator:
         )
 
         # Perform reasoning
-        reasoning_result = await cast(
-            "BioinformaticsAgent", bioinformatics_agent
-        ).perform_reasoning(reasoning_task, fused_dataset)
+        reasoning_result = await bioinformatics_agent.perform_reasoning(
+            reasoning_task, fused_dataset
+        )
 
         return {
             "fused_dataset": fused_dataset.model_dump(),
@@ -1288,13 +1325,13 @@ class MultiAgentOrchestrator:
         self, question: str, _parsed: dict[str, Any], _plan: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Execute RAG workflow."""
-        rag_agent = self.agents[AgentType.RAG]
+        rag_agent = cast("RAGAgent", self.agents[AgentType.RAG])
 
         # Create RAG query
         rag_query = RAGQuery(text=question, top_k=5)
 
         # Perform RAG query
-        rag_response = await cast("RAGAgent", rag_agent).query(rag_query)
+        rag_response = await rag_agent.query(rag_query)
 
         return {
             "rag_response": rag_response.model_dump(),
@@ -1325,7 +1362,7 @@ class MultiAgentOrchestrator:
             if result.success:
                 return {
                     "deep_agent_result": result.result,
-                    "answer": result.result.get(
+                    "answer": (result.result or {}).get(
                         "final_result", "DeepAgent workflow completed"
                     )
                     if result.result is not None
@@ -1347,7 +1384,7 @@ class MultiAgentOrchestrator:
             if result.success:
                 return {
                     "deep_agent_result": result.result,
-                    "answer": result.result.get(
+                    "answer": (result.result or {}).get(
                         "result_synthesis", "DeepAgent orchestration completed"
                     )
                     if result.result is not None
@@ -1369,6 +1406,17 @@ class MultiAgentOrchestrator:
 # Factory functions for creating agents
 def create_agent(agent_type: AgentType, **kwargs) -> BaseAgent:
     """Create an agent of the specified type."""
+    cfg = kwargs.get("config")
+    if agent_type in DEEP_AGENT_TYPES and not (
+        isinstance(cfg, dict) and cfg.get("deep_agent", {}).get("enabled", False)
+    ):
+        msg = (
+            f"Agent type {agent_type.value!r} requires "
+            "`config['deep_agent']['enabled'] == True` (same gate as "
+            "MultiAgentOrchestrator)."
+        )
+        raise ValueError(msg)
+
     agent_classes = {
         AgentType.PARSER: ParserAgent,
         AgentType.PLANNER: PlannerAgent,

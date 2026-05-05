@@ -41,8 +41,8 @@ class WebSearchTool(ToolRunner):
     def __init__(self):
         super().__init__(
             ToolSpec(
-                name="web_search",
-                description="Perform web search using various search engines and return structured results",
+                name="deepsearch_web_search_mock",
+                description="Perform web search for DeepSearch flow (mock implementation by default).",
                 inputs={
                     "query": "TEXT",
                     "time_filter": "TEXT",
@@ -829,7 +829,7 @@ class DeepSearchTool(ToolRunner):
         )
 
 
-registry.register("web_search", WebSearchTool)
+registry.register("deepsearch_web_search_mock", WebSearchTool)
 registry.register("url_visit", URLVisitTool)
 registry.register("reflection", ReflectionTool)
 registry.register("answer_generator", AnswerGeneratorTool)

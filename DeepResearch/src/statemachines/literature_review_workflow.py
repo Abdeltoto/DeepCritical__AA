@@ -4,7 +4,7 @@ Critical literature review workflow.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -458,7 +458,9 @@ async def run_literature_review_workflow(
         config=cfg,
     )
     workflow = create_literature_review_workflow()
-    result = await workflow.run(ParseLiteratureReviewRequest(), state=state)  # type: ignore[arg-type]
+    result = await cast("Any", workflow).run(
+        ParseLiteratureReviewRequest(), state=state
+    )
     return result.output if hasattr(result, "output") else {"error": "No output"}  # type: ignore[return-value]
 
 

@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+# Import registry locally to avoid circular imports
+# from ..tools.base import registry  # Commented out to avoid circular imports
+from DeepResearch.src.tools.base import ExecutionResult, ToolRunner, ToolSpec
 from DeepResearch.src.utils.pydantic_ai_utils import build_agent as _build_agent
 from DeepResearch.src.utils.pydantic_ai_utils import (
     build_builtin_tools as _build_builtin_tools,
@@ -20,16 +23,12 @@ from DeepResearch.src.utils.pydantic_ai_utils import build_toolsets as _build_to
 from DeepResearch.src.utils.pydantic_ai_utils import get_pydantic_ai_config as _get_cfg
 from DeepResearch.src.utils.pydantic_ai_utils import run_agent_sync as _run_sync
 
-# Import registry locally to avoid circular imports
-# from ..tools.base import registry  # Commented out to avoid circular imports
-
 
 class WebSearchBuiltinRunner:
     """Pydantic AI builtin web search wrapper."""
 
     def __init__(self):
         # Import base classes locally to avoid circular imports
-        from DeepResearch.src.tools.base import ToolRunner, ToolSpec
 
         # Initialize spec for validation
         self.spec = ToolSpec(
@@ -48,14 +47,14 @@ class WebSearchBuiltinRunner:
                 return False, f"Invalid type for {k}: expected str"
         return True, None
 
-    def run(self, params: dict[str, Any]) -> dict[str, Any]:
+    def run(self, params: dict[str, Any]) -> ExecutionResult:
         ok, err = self.validate(params)
         if not ok:
-            return {"success": False, "error": err}
+            return ExecutionResult(success=False, error=err)
 
         q = str(params.get("query", "")).strip()
         if not q:
-            return {"success": False, "error": "Empty query"}
+            return ExecutionResult(success=False, error="Empty query")
 
         cfg = _get_cfg()
         builtin_tools = _build_builtin_tools(cfg)
@@ -69,19 +68,18 @@ class WebSearchBuiltinRunner:
 
                 builtin_tools.append(WebSearchTool())
             except Exception:
-                return {"success": False, "error": "pydantic_ai not available"}
+                return ExecutionResult(success=False, error="pydantic_ai not available")
 
         toolsets = _build_toolsets(cfg)
         agent, _ = _build_agent(cfg, builtin_tools, toolsets)
         if agent is None:
-            return {
-                "success": False,
-                "error": "pydantic_ai not available or misconfigured",
-            }
+            return ExecutionResult(
+                success=False, error="pydantic_ai not available or misconfigured"
+            )
 
         result = _run_sync(agent, q)
         if not result:
-            return {"success": False, "error": "web search failed"}
+            return ExecutionResult(success=False, error="web search failed")
 
         text = getattr(result, "output", "")
         # Best-effort extract sources when provider supports it; keep as string
@@ -95,7 +93,7 @@ class WebSearchBuiltinRunner:
         except Exception:
             pass
 
-        return {"success": True, "data": {"results": text, "sources": sources}}
+        return ExecutionResult(success=True, data={"results": text, "sources": sources})
 
 
 class CodeExecBuiltinRunner:
@@ -103,7 +101,6 @@ class CodeExecBuiltinRunner:
 
     def __init__(self):
         # Import base classes locally to avoid circular imports
-        from DeepResearch.src.tools.base import ToolRunner, ToolSpec
 
         # Initialize spec for validation
         self.spec = ToolSpec(
@@ -122,14 +119,14 @@ class CodeExecBuiltinRunner:
                 return False, f"Invalid type for {k}: expected str"
         return True, None
 
-    def run(self, params: dict[str, Any]) -> dict[str, Any]:
+    def run(self, params: dict[str, Any]) -> ExecutionResult:
         ok, err = self.validate(params)
         if not ok:
-            return {"success": False, "error": err}
+            return ExecutionResult(success=False, error=err)
 
         code = str(params.get("code", "")).strip()
         if not code:
-            return {"success": False, "error": "Empty code"}
+            return ExecutionResult(success=False, error="Empty code")
 
         cfg = _get_cfg()
         builtin_tools = _build_builtin_tools(cfg)
@@ -143,19 +140,18 @@ class CodeExecBuiltinRunner:
 
                 builtin_tools.append(CodeExecutionTool())
             except Exception:
-                return {"success": False, "error": "pydantic_ai not available"}
+                return ExecutionResult(success=False, error="pydantic_ai not available")
 
         toolsets = _build_toolsets(cfg)
         agent, _ = _build_agent(cfg, builtin_tools, toolsets)
         if agent is None:
-            return {
-                "success": False,
-                "error": "pydantic_ai not available or misconfigured",
-            }
+            return ExecutionResult(
+                success=False, error="pydantic_ai not available or misconfigured"
+            )
 
         # Load system prompt from Hydra (if available)
         try:
-            from DeepResearch.src.prompts import PromptLoader  # type: ignore
+            from DeepResearch.src.prompts import PromptLoader
 
             # In this wrapper, cfg may be empty; PromptLoader expects DictConfig-like object
             loader = PromptLoader(cfg)  # type: ignore
@@ -170,8 +166,10 @@ class CodeExecBuiltinRunner:
 
         result = _run_sync(agent, prompt)
         if not result:
-            return {"success": False, "error": "code execution failed"}
-        return {"success": True, "data": {"output": getattr(result, "output", "")}}
+            return ExecutionResult(success=False, error="code execution failed")
+        return ExecutionResult(
+            success=True, data={"output": getattr(result, "output", "")}
+        )
 
 
 class UrlContextBuiltinRunner:
@@ -179,7 +177,6 @@ class UrlContextBuiltinRunner:
 
     def __init__(self):
         # Import base classes locally to avoid circular imports
-        from DeepResearch.src.tools.base import ToolRunner, ToolSpec
 
         # Initialize spec for validation
         self.spec = ToolSpec(
@@ -198,14 +195,14 @@ class UrlContextBuiltinRunner:
                 return False, f"Invalid type for {k}: expected str"
         return True, None
 
-    def run(self, params: dict[str, Any]) -> dict[str, Any]:
+    def run(self, params: dict[str, Any]) -> ExecutionResult:
         ok, err = self.validate(params)
         if not ok:
-            return {"success": False, "error": err}
+            return ExecutionResult(success=False, error=err)
 
         url = str(params.get("url", "")).strip()
         if not url:
-            return {"success": False, "error": "Empty url"}
+            return ExecutionResult(success=False, error="Empty url")
 
         cfg = _get_cfg()
         builtin_tools = _build_builtin_tools(cfg)
@@ -219,23 +216,24 @@ class UrlContextBuiltinRunner:
 
                 builtin_tools.append(UrlContextTool())
             except Exception:
-                return {"success": False, "error": "pydantic_ai not available"}
+                return ExecutionResult(success=False, error="pydantic_ai not available")
 
         toolsets = _build_toolsets(cfg)
         agent, _ = _build_agent(cfg, builtin_tools, toolsets)
         if agent is None:
-            return {
-                "success": False,
-                "error": "pydantic_ai not available or misconfigured",
-            }
+            return ExecutionResult(
+                success=False, error="pydantic_ai not available or misconfigured"
+            )
 
         prompt = (
             f"What is this? {url}\n\nExtract the main content or a concise summary."
         )
         result = _run_sync(agent, prompt)
         if not result:
-            return {"success": False, "error": "url context failed"}
-        return {"success": True, "data": {"content": getattr(result, "output", "")}}
+            return ExecutionResult(success=False, error="url context failed")
+        return ExecutionResult(
+            success=True, data={"content": getattr(result, "output", "")}
+        )
 
 
 # Registry overrides and additions

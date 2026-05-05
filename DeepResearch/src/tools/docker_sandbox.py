@@ -323,16 +323,41 @@ class DockerSandboxRunner(ToolRunner):
             container.start()
             _wait_for_ready(container, timeout=30)
 
-            # Execute the command with timeout
+            # Execute the command with timeout (host-side enforced).
             logger.info("Executing command: %s", cmd)
-            result = container.get_wrapped_container().exec_run(
-                cmd,
-                workdir=sandbox_config.working_directory,
-                environment=env_map,
-                stdout=True,
-                stderr=True,
-                demux=True,
-            )
+            wrapped = container.get_wrapped_container()
+            try:
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(
+                        wrapped.exec_run,
+                        cmd,
+                        workdir=sandbox_config.working_directory,
+                        environment=env_map,
+                        stdout=True,
+                        stderr=True,
+                        demux=True,
+                    )
+                    result = fut.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                try:
+                    container.stop()
+                except Exception:
+                    pass
+                return ExecutionResult(
+                    success=False,
+                    error=TIMEOUT_MSG,
+                    data={
+                        "stdout": "",
+                        "stderr": TIMEOUT_MSG,
+                        "exit_code": "124",
+                        "files": json.dumps(files_created),
+                        "success": False,
+                        "retries_used": "0",
+                        "execution_time": float(timeout),
+                    },
+                )
 
             # Parse results
             stdout_bytes, stderr_bytes = (

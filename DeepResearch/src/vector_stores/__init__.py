@@ -4,6 +4,7 @@ from ..datatypes.neo4j_types import Neo4jVectorStoreConfig
 from ..datatypes.rag import Embeddings, VectorStore, VectorStoreConfig, VectorStoreType
 from .chroma_config import ChromaVectorStoreConfig
 from .chroma_vector_store import ChromaVectorStore
+from .in_memory_vector_store import InMemoryVectorStore
 from .milvus_config import MilvusVectorStoreConfig
 from .milvus_vector_store import MilvusVectorStore
 from .neo4j_vector_store import Neo4jVectorStore
@@ -15,6 +16,7 @@ from .postgres_vector_store import PostgresVectorStore
 __all__ = [
     "ChromaVectorStore",
     "ChromaVectorStoreConfig",
+    "InMemoryVectorStore",
     "MilvusVectorStore",
     "MilvusVectorStoreConfig",
     "Neo4jVectorStore",

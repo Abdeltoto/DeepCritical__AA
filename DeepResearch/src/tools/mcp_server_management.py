@@ -52,6 +52,7 @@ from ..utils.testcontainers_deployer import (
     TestcontainersDeployer,
 )
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
+from .mcp_server_tools import MCP_STUB_SERVER_NAMES
 
 
 class MCPServerProtocol(Protocol):
@@ -64,6 +65,10 @@ class MCPServerProtocol(Protocol):
     def run_tool(self, tool_name: str, **kwargs) -> Any:
         """Run a specific tool."""
         ...
+
+    # Back-compat aliases used by some server implementations/dispatch paths.
+    def execute_tool(self, tool_name: str, **kwargs) -> Any: ...
+    async def execute_tool_async(self, request: Any) -> Any: ...
 
 
 # Placeholder classes for servers not yet implemented
@@ -294,11 +299,12 @@ class MCPServerListTool(ToolRunner):
                     "name": server_name,
                     "type": getattr(server_class, "__name__", "Unknown"),
                     "description": getattr(server_class, "__doc__", "").strip(),
+                    "implemented": server_name not in MCP_STUB_SERVER_NAMES,
                 }
 
                 if include_tools:
                     try:
-                        server_instance: MCPServerProtocol = server_class()  # type: ignore[assignment]
+                        server_instance = server_class()
                         server_info["tools"] = server_instance.list_tools()
                     except Exception as e:
                         server_info["tools"] = []

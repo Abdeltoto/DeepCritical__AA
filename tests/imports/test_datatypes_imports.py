@@ -176,6 +176,7 @@ class TestDatatypesModuleImports:
         assert LiteratureSynthesis is not None
         assert LiteratureReviewReport is not None
         assert LiteratureReviewWorkflowResult is not None
+
     def test_hypothesis_package_exports(self):
         """Test package-level exports for hypothesis datatypes."""
 

@@ -324,7 +324,7 @@ class AgentGraphExecutor:
                 "node": node_name,
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             execution_time = time.time() - start_time
             self.execution_history.append(
                 {
@@ -418,7 +418,7 @@ class AgentBuilder:
             subagents=self.config.subagents
         )
 
-    def build_agent(self) -> Agent:
+    def build_agent(self) -> Agent[DeepAgentState, str]:
         """Build an agent with the configured middleware and tools."""
         # Create base agent
         model = self.config.model_name or resolve_pydantic_ai_model(
@@ -457,7 +457,7 @@ class AgentBuilder:
 
         return base_prompt
 
-    def _add_tools(self, agent: Agent) -> None:
+    def _add_tools(self, agent: Agent[DeepAgentState, str]) -> None:
         """Add tools to the agent."""
         tool_map = {
             "write_todos": write_todos_tool,
@@ -473,13 +473,13 @@ class AgentBuilder:
                 # Add tool if method exists
                 if hasattr(agent, "add_tool") and callable(agent.add_tool):
                     add_tool_method = agent.add_tool
-                    add_tool_method(tool_map[tool_name])  # type: ignore
+                    add_tool_method(tool_map[tool_name])
                 elif hasattr(agent, "tools") and hasattr(agent.tools, "append"):
                     tools_attr = agent.tools
                     if hasattr(tools_attr, "append") and callable(tools_attr.append):
-                        tools_attr.append(tool_map[tool_name])  # type: ignore
+                        tools_attr.append(tool_map[tool_name])
 
-    def _add_middleware(self, agent: Agent) -> None:
+    def _add_middleware(self, agent: Agent[DeepAgentState, str]) -> None:
         """Add middleware to the agent."""
         # In a real implementation, you would integrate middleware
         # with the Pydantic AI agent system
@@ -527,7 +527,7 @@ def create_simple_agent(
     model_name: str | None = None,
     instructions: str = "",
     tools: list[str] | None = None,
-) -> Agent:
+) -> Agent[DeepAgentState, str]:
     """Create a simple agent with basic configuration."""
     builder = create_agent_builder(model_name, instructions, tools)
     return builder.build_agent()
@@ -539,7 +539,7 @@ def create_deep_agent(
     subagents: list[SubAgent | CustomSubAgent] | None = None,
     model_name: str | None = None,
     **kwargs,
-) -> Agent:
+) -> Agent[DeepAgentState, str]:
     """Create a deep agent with full capabilities."""
     default_tools = [
         "write_todos",
@@ -567,7 +567,7 @@ def create_async_deep_agent(
     subagents: list[SubAgent | CustomSubAgent] | None = None,
     model_name: str | None = None,
     **kwargs,
-) -> Agent:
+) -> Agent[DeepAgentState, str]:
     """Create an async deep agent with full capabilities."""
     # For now, this is the same as create_deep_agent
     # In a real implementation, you would configure async-specific settings

@@ -5,8 +5,9 @@ notes
 .claude/
 test_artifacts/
 bandit-report.json
-codecov.yml
 .ruff_cache
+logs
+*.log
 
 # Python
 __pycache__/

@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any, cast
 
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
 
 from DeepResearch.src.datatypes.bioinformatics import (
     BioinformaticsAgentDeps,
@@ -22,6 +21,7 @@ from DeepResearch.src.datatypes.bioinformatics import (
     ReasoningResult,
     ReasoningTask,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.bioinformatics_agents import BioinformaticsAgentPrompts
 
 
@@ -30,12 +30,14 @@ class DataFusionAgent:
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
         config: dict[str, Any] | None = None,
     ):
         self.model_name = model_name
         self.config = config or {}
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, DataFusionResult] = (
+            self._create_agent()
+        )
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, DataFusionResult]:
         """Create the data fusion agent."""
@@ -44,8 +46,7 @@ class DataFusionAgent:
         agents_config = bioinformatics_config.get("agents", {})
         data_fusion_config = agents_config.get("data_fusion", {})
 
-        model_name = data_fusion_config.get("model", self.model_name)
-        model = AnthropicModel(model_name)
+        model = data_fusion_config.get("model", self.model_name)
 
         # Get system prompt from config or use default
         system_prompt = data_fusion_config.get(
@@ -83,16 +84,17 @@ class DataFusionAgent:
 class GOAnnotationAgent:
     """Agent for processing GO annotations with PubMed context."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, list[GOAnnotation]] = (
+            self._create_agent()
+        )
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, list[GOAnnotation]]:
         """Create the GO annotation agent."""
-        model = AnthropicModel(self.model_name)
 
         return Agent[BioinformaticsAgentDeps, list[GOAnnotation]](
-            model=model,
+            model=self.model_name,
             deps_type=BioinformaticsAgentDeps,
             output_type=list[GOAnnotation],
             system_prompt=BioinformaticsAgentPrompts.GO_ANNOTATION_SYSTEM,
@@ -123,16 +125,17 @@ class GOAnnotationAgent:
 class ReasoningAgent:
     """Agent for performing reasoning tasks on fused bioinformatics data."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, ReasoningResult] = (
+            self._create_agent()
+        )
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, ReasoningResult]:
         """Create the reasoning agent."""
-        model = AnthropicModel(self.model_name)
 
         return Agent[BioinformaticsAgentDeps, ReasoningResult](
-            model=model,
+            model=self.model_name,
             deps_type=BioinformaticsAgentDeps,
             output_type=ReasoningResult,
             system_prompt=BioinformaticsAgentPrompts.REASONING_SYSTEM,
@@ -168,16 +171,17 @@ class ReasoningAgent:
 class DataQualityAgent:
     """Agent for assessing data quality and consistency."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
-        self.agent = self._create_agent()
+        self.agent: Agent[BioinformaticsAgentDeps, dict[str, float]] = (
+            self._create_agent()
+        )
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, dict[str, float]]:
         """Create the data quality agent."""
-        model = AnthropicModel(self.model_name)
 
         return Agent[BioinformaticsAgentDeps, dict[str, float]](
-            model=model,
+            model=self.model_name,
             deps_type=BioinformaticsAgentDeps,
             output_type=dict[str, float],
             system_prompt=BioinformaticsAgentPrompts.DATA_QUALITY_SYSTEM,
@@ -211,7 +215,7 @@ class DataQualityAgent:
 class BioinformaticsAgent:
     """Main bioinformatics agent that coordinates all bioinformatics operations."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
         self.orchestrator = AgentOrchestrator(model_name)
 
@@ -245,7 +249,7 @@ class BioinformaticsAgent:
 class AgentOrchestrator:
     """Orchestrator for coordinating multiple bioinformatics agents."""
 
-    def __init__(self, model_name: str = "anthropic:claude-sonnet-4-0"):
+    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL):
         self.model_name = model_name
         self.fusion_agent = DataFusionAgent(model_name)
         self.go_agent = GOAnnotationAgent(model_name)

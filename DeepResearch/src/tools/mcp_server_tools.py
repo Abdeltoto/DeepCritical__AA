@@ -108,6 +108,12 @@ class HOMERServer:
         raise NotImplementedError(msg)
 
 
+# Server keys that only have stub classes (no container/deploy implementation yet).
+MCP_STUB_SERVER_NAMES: frozenset[str] = frozenset(
+    {"bwa", "tophat", "htseq", "picard", "homer"}
+)
+
+
 class MCPServerManager:
     """Manager for vendored MCP servers."""
 
@@ -163,8 +169,16 @@ class MCPServerManager:
         return self.servers.get(server_name)
 
     def list_servers(self) -> list[str]:
-        """List all available servers."""
-        return list(self.servers.keys())
+        """List all registered server keys (includes stubs)."""
+        return sorted(self.servers.keys())
+
+    def list_registered(self) -> list[str]:
+        """All names registered on the manager (including stubs)."""
+        return sorted(self.servers.keys())
+
+    def list_implemented(self) -> list[str]:
+        """Names with real server implementations (excludes stub placeholders)."""
+        return sorted(n for n in self.servers if n not in MCP_STUB_SERVER_NAMES)
 
     async def deploy_server(
         self, server_name: str, config: MCPServerConfig
@@ -178,6 +192,19 @@ class MCPServerManager:
                 configuration=config,
                 status=MCPServerStatus.FAILED,
                 error_message=f"Server {server_name} not found",
+                tools_available=[],
+            )
+
+        if server_name in MCP_STUB_SERVER_NAMES:
+            return MCPServerDeployment(
+                server_name=server_name,
+                server_type=config.server_type,
+                configuration=config,
+                status=MCPServerStatus.FAILED,
+                error_message=(
+                    f"Server {server_name!r} is not implemented yet (stub only). "
+                    f"Implemented: {', '.join(self.list_implemented())}"
+                ),
                 tools_available=[],
             )
 
@@ -633,15 +660,16 @@ def mcp_server_stop_tool(ctx: Any) -> str:
     return f"Stop failed: {result.error}"
 
 
-# Register tools with the global registry
-def register_mcp_server_tools():
-    """Register MCP server tools with the global registry."""
-    registry.register("mcp_server_deploy", MCPServerDeploymentTool)
-    registry.register("mcp_server_list", MCPServerListTool)
-    registry.register("mcp_server_execute", MCPServerExecuteTool)
-    registry.register("mcp_server_status", MCPServerStatusTool)
-    registry.register("mcp_server_stop", MCPServerStopTool)
-
-
-# Auto-register when module is imported
-register_mcp_server_tools()
+# NOTE:
+# This module overlaps with `DeepResearch/src/tools/mcp_server_management.py`, which
+# provides a more complete management surface. To avoid tool-name collisions in the
+# canonical registry, we do NOT auto-register these tools under the canonical names.
+#
+# If you need these legacy implementations explicitly, call `register_mcp_server_tools_legacy()`.
+def register_mcp_server_tools_legacy():
+    """Register legacy MCP server tools under *_legacy names."""
+    registry.register("mcp_server_deploy_legacy", MCPServerDeploymentTool)
+    registry.register("mcp_server_list_legacy", MCPServerListTool)
+    registry.register("mcp_server_execute_legacy", MCPServerExecuteTool)
+    registry.register("mcp_server_status_legacy", MCPServerStatusTool)
+    registry.register("mcp_server_stop_legacy", MCPServerStopTool)

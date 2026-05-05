@@ -27,13 +27,10 @@ class PatentScrapeTool(ToolRunner):
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-        title = (soup.find("title").get_text() if soup.find("title") else "").strip()
+        title_el = soup.find("title")
+        title = (title_el.get_text() if title_el else "").strip()
         abstract_el = soup.find("meta", {"name": "description"})
-        abstract = (
-            abstract_el["content"].strip()
-            if abstract_el and abstract_el.get("content")
-            else ""
-        )
+        abstract = str(abstract_el.get("content", "")).strip() if abstract_el else ""
         return ExecutionResult(
             success=True, data={"title": title, "abstract": abstract}
         )

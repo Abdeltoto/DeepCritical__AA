@@ -14,11 +14,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 # Import existing DeepCritical types
 from DeepResearch.src.datatypes.deep_agent_state import DeepAgentState
 from DeepResearch.src.datatypes.deep_agent_types import AgentCapability, AgentMetrics
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.deep_agent_prompts import get_system_prompt
 from DeepResearch.src.tools.deep_agent_middleware import (
     MiddlewarePipeline,
@@ -32,7 +33,6 @@ from DeepResearch.src.tools.deep_agent_tools import (
     write_file_tool,
     write_todos_tool,
 )
-from DeepResearch.src.utils.model_registry import DEFAULT_PYDANTIC_AI_MODEL
 
 
 class AgentConfig(BaseModel):
@@ -138,7 +138,10 @@ class BaseDeepAgent:
 
     def _initialize_middleware(self) -> None:
         """Initialize middleware pipeline."""
-        self.middleware_pipeline = create_default_middleware_pipeline()
+        # The middleware pipeline expects `RunContext[DeepAgentState]`, but this
+        # module works with `DeepAgentState` directly. Disable until the
+        # integration is refactored.
+        self.middleware_pipeline = None
 
     async def execute(
         self,
@@ -215,6 +218,9 @@ class BaseDeepAgent:
         assert self.agent is not None
 
         last_error = None
+        agent = self.agent
+        if agent is None:
+            raise RuntimeError("Agent not initialized")
 
         for attempt in range(self.config.retry_attempts + 1):
             try:

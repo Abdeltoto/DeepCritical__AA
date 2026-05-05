@@ -28,6 +28,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class SeqtkServer(MCPServerBase):
@@ -155,18 +158,26 @@ class SeqtkServer(MCPServerBase):
                             "mock": True,
                         }
 
-                # Return mock success result for testing when tool is not available
-                return {
-                    "success": True,
-                    "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
-                    "stdout": f"Mock output for {operation} operation",
-                    "stderr": "",
-                    "output_files": [
-                        method_params.get("output_file", f"mock_{operation}_output.txt")
-                    ],
-                    "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                miss = response_if_executable_missing(
+                    tool_name_check,
+                    {
+                        "success": True,
+                        "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
+                        "stdout": f"Mock output for {operation} operation",
+                        "stderr": "",
+                        "output_files": [
+                            method_params.get(
+                                "output_file", f"mock_{operation}_output.txt"
+                            )
+                        ],
+                        "exit_code": 0,
+                        "mock": True,
+                    },
+                )
+                assert (
+                    miss is not None
+                )  # seqtk absent on PATH; helper never returns None here
+                return miss
 
             # Call the appropriate method
             return method(**method_params)

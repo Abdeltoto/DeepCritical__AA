@@ -4,7 +4,7 @@ This guide covers setting up a development environment for DeepCritical.
 
 ## Prerequisites
 
-- **Python 3.10+**: Required for all dependencies
+- **Python 3.11+**: Required for all dependencies
 - **Git**: For version control and cloning repositories
 - **uv** (Recommended): Fast Python package manager
 - **Make**: For running build commands (optional but recommended)

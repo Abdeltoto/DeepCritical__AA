@@ -79,6 +79,12 @@ _CLASS_EXPORTS = {
 _registry_state = {"bootstrapped": False}
 
 
+def bootstrap_default_tools() -> None:
+    """Populate the canonical registry with bundled tools (same as lazy ``tools.registry``)."""
+
+    _ensure_default_registrations()
+
+
 def _ensure_default_registrations() -> None:
     """Populate the default tool registry on demand."""
 
