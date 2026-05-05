@@ -27,9 +27,9 @@ class BioinformaticsConfigLoader:
         result = OmegaConf.to_container(
             self.config.get("bioinformatics", {}), resolve=True
         )
-        if not isinstance(result, dict):
-            return {}
-        return {str(k): v for k, v in result.items()}
+        from typing import cast
+
+        return cast("dict[str, Any]", result) if isinstance(result, dict) else {}
 
     def get_model_config(self) -> dict[str, Any]:
         """Get model configuration."""

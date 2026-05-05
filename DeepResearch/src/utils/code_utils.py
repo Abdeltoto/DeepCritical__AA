@@ -22,7 +22,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from hashlib import md5
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import docker
 from DeepResearch.src.datatypes.ag_types import (
@@ -671,9 +671,11 @@ def create_virtual_env(dir_path: str, **env_args) -> SimpleNamespace:
     if not env_args:
         env_args = {"with_pip": True}
     # Filter env_args to only include valid EnvBuilder parameters
-    valid_args: dict[str, Any] = {}
-    for k, v in env_args.items():
-        if k not in {
+    valid_args = {
+        k: v
+        for k, v in env_args.items()
+        if k
+        in [
             "system_site_packages",
             "clear",
             "symlinks",
@@ -681,11 +683,10 @@ def create_virtual_env(dir_path: str, **env_args) -> SimpleNamespace:
             "with_pip",
             "prompt",
             "upgrade_deps",
-        }:
-            continue
-        if k == "prompt" and v is not None and not isinstance(v, str):
-            continue
-        valid_args[k] = v
-    env_builder = venv.EnvBuilder(**valid_args)
+        ]
+    }
+    # EnvBuilder expects specific types, but valid_args values are inferred loosely
+    # Cast to Any to satisfy type checker
+    env_builder = venv.EnvBuilder(**cast("Any", valid_args))
     env_builder.create(dir_path)
     return env_builder.ensure_directories(dir_path)

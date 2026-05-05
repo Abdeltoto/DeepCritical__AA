@@ -9,7 +9,7 @@ embedding providers.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast
+from typing import Any, Dict, List, Optional, cast
 
 from neo4j import GraphDatabase
 from typing_extensions import LiteralString
@@ -291,8 +291,7 @@ class Neo4jEmbeddingsManager:
             query += " LIMIT 100"
 
             result = session.run(
-                cast("LiteralString", query),
-                node_ids=node_ids if node_ids else [],
+                cast("LiteralString", query), node_ids=node_ids if node_ids else []
             )
 
             nodes = []
@@ -353,13 +352,13 @@ class Neo4jEmbeddingsManager:
             """)
 
             record = result.single()
-            if record is None:
-                stats["publications"] = {"total": 0, "with_embeddings": 0}
-            else:
+            if record:
                 stats["publications"] = {
                     "total": record["total_publications"],
                     "with_embeddings": record["publications_with_embeddings"],
                 }
+            else:
+                stats["publications"] = {"total": 0, "with_embeddings": 0}
 
             # Document embedding stats
             result = session.run("""
@@ -369,13 +368,13 @@ class Neo4jEmbeddingsManager:
             """)
 
             record = result.single()
-            if record is None:
-                stats["documents"] = {"total": 0, "with_embeddings": 0}
-            else:
+            if record:
                 stats["documents"] = {
                     "total": record["total_documents"],
                     "with_embeddings": record["documents_with_embeddings"],
                 }
+            else:
+                stats["documents"] = {"total": 0, "with_embeddings": 0}
 
             # Chunk embedding stats
             result = session.run("""
@@ -385,13 +384,13 @@ class Neo4jEmbeddingsManager:
             """)
 
             record = result.single()
-            if record is None:
-                stats["chunks"] = {"total": 0, "with_embeddings": 0}
-            else:
+            if record:
                 stats["chunks"] = {
                     "total": record["total_chunks"],
                     "with_embeddings": record["chunks_with_embeddings"],
                 }
+            else:
+                stats["chunks"] = {"total": 0, "with_embeddings": 0}
 
         # Print statistics
         print("Embedding Statistics:")

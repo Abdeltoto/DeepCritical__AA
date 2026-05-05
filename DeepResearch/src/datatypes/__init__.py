@@ -124,6 +124,13 @@ from .execution import (
     WorkflowDAG,
     WorkflowStep,
 )
+from .hypothesis import (
+    HypothesisCandidate,
+    HypothesisEvidence,
+    HypothesisScore,
+    HypothesisTestPlan,
+    HypothesisWorkflowResult,
+)
 from .llm_models import (
     GenerationConfig,
     LLMConnectionConfig,
@@ -145,6 +152,20 @@ from .mcp import (
     MCPToolSpec,
     MCPWorkflowRequest,
     MCPWorkflowResult,
+)
+from .mgrep import (
+    CHUNKING_STRATEGY_VERSION,
+    DEFAULT_SUPPORTED_EXTENSIONS,
+    MANIFEST_VERSION,
+    MgrepChunk,
+    MgrepConfig,
+    MgrepManifest,
+    MgrepManifestEntry,
+    MgrepSearchHit,
+    MgrepSearchRequest,
+    MgrepSearchResponse,
+    MgrepStats,
+    build_chunk_id,
 )
 from .middleware import (
     BaseMiddleware,
@@ -261,6 +282,9 @@ from .workflow_patterns import (
 )
 
 __all__ = [
+    "CHUNKING_STRATEGY_VERSION",
+    "DEFAULT_SUPPORTED_EXTENSIONS",
+    "MANIFEST_VERSION",
     "MAX_QUERIES_PER_STEP",
     "MAX_REFLECT_PER_STEP",
     "MAX_URLS_PER_STEP",
@@ -344,6 +368,11 @@ __all__ = [
     "GenerationConfig",
     "HostedFileContent",
     "HostedVectorStoreContent",
+    "HypothesisCandidate",
+    "HypothesisEvidence",
+    "HypothesisScore",
+    "HypothesisTestPlan",
+    "HypothesisWorkflowResult",
     "IPythonCodeResult",
     "IntegratedSearchRequest",
     "IntegratedSearchResponse",
@@ -369,6 +398,14 @@ __all__ = [
     "MCPWorkflowRequest",
     "MCPWorkflowResult",
     "MessageType",
+    "MgrepChunk",
+    "MgrepConfig",
+    "MgrepManifest",
+    "MgrepManifestEntry",
+    "MgrepSearchHit",
+    "MgrepSearchRequest",
+    "MgrepSearchResponse",
+    "MgrepStats",
     "MiddlewareConfig",
     "MiddlewarePipeline",
     "MiddlewareResult",
@@ -443,6 +480,7 @@ __all__ = [
     "WriteFileResponse",
     "WriteTodosRequest",
     "WriteTodosResponse",
+    "build_chunk_id",
     "create_default_middleware_pipeline",
     "create_filesystem_middleware",
     "create_interaction_state",

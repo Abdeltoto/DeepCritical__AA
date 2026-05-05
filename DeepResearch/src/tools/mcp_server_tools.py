@@ -30,9 +30,14 @@ from DeepResearch.src.tools.bioinformatics.featurecounts_server import (
 )
 from DeepResearch.src.tools.bioinformatics.flye_server import FlyeServer
 from DeepResearch.src.tools.bioinformatics.freebayes_server import FreeBayesServer
+from DeepResearch.src.tools.bioinformatics.gunzip_server import GunzipServer
+from DeepResearch.src.tools.bioinformatics.haplotypecaller_server import (
+    HaplotypeCallerServer,
+)
 from DeepResearch.src.tools.bioinformatics.hisat2_server import HISAT2Server
 from DeepResearch.src.tools.bioinformatics.kallisto_server import KallistoServer
 from DeepResearch.src.tools.bioinformatics.macs3_server import MACS3Server
+from DeepResearch.src.tools.bioinformatics.mafft_server import MAFFTServer
 from DeepResearch.src.tools.bioinformatics.meme_server import MEMEServer
 from DeepResearch.src.tools.bioinformatics.minimap2_server import Minimap2Server
 from DeepResearch.src.tools.bioinformatics.multiqc_server import MultiQCServer
@@ -103,6 +108,12 @@ class HOMERServer:
         raise NotImplementedError(msg)
 
 
+# Server keys that only have stub classes (no container/deploy implementation yet).
+MCP_STUB_SERVER_NAMES: frozenset[str] = frozenset(
+    {"bwa", "tophat", "htseq", "picard", "homer"}
+)
+
+
 class MCPServerManager:
     """Manager for vendored MCP servers."""
 
@@ -146,6 +157,11 @@ class MCPServerManager:
             # Variant Analysis
             "bcftools": BCFtoolsServer,
             "freebayes": FreeBayesServer,
+            "haplotypecaller": HaplotypeCallerServer,
+            # Compression & Utilities
+            "gunzip": GunzipServer,
+            # Multiple Sequence Alignment
+            "mafft": MAFFTServer,
         }
 
     def get_server(self, server_name: str):
@@ -153,8 +169,16 @@ class MCPServerManager:
         return self.servers.get(server_name)
 
     def list_servers(self) -> list[str]:
-        """List all available servers."""
-        return list(self.servers.keys())
+        """List all registered server keys (includes stubs)."""
+        return sorted(self.servers.keys())
+
+    def list_registered(self) -> list[str]:
+        """All names registered on the manager (including stubs)."""
+        return sorted(self.servers.keys())
+
+    def list_implemented(self) -> list[str]:
+        """Names with real server implementations (excludes stub placeholders)."""
+        return sorted(n for n in self.servers if n not in MCP_STUB_SERVER_NAMES)
 
     async def deploy_server(
         self, server_name: str, config: MCPServerConfig
@@ -164,8 +188,24 @@ class MCPServerManager:
         if not server_class:
             return MCPServerDeployment(
                 server_name=server_name,
+                server_type=config.server_type,
+                configuration=config,
                 status=MCPServerStatus.FAILED,
                 error_message=f"Server {server_name} not found",
+                tools_available=[],
+            )
+
+        if server_name in MCP_STUB_SERVER_NAMES:
+            return MCPServerDeployment(
+                server_name=server_name,
+                server_type=config.server_type,
+                configuration=config,
+                status=MCPServerStatus.FAILED,
+                error_message=(
+                    f"Server {server_name!r} is not implemented yet (stub only). "
+                    f"Implemented: {', '.join(self.list_implemented())}"
+                ),
+                tools_available=[],
             )
 
         try:
@@ -177,8 +217,11 @@ class MCPServerManager:
         except Exception as e:
             return MCPServerDeployment(
                 server_name=server_name,
+                server_type=config.server_type,
+                configuration=config,
                 status=MCPServerStatus.FAILED,
                 error_message=str(e),
+                tools_available=[],
             )
 
     def stop_server(self, server_name: str) -> bool:

@@ -7,6 +7,7 @@ using the vendored AG2 code execution framework for execution.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 from pydantic_ai import Agent
@@ -22,6 +23,7 @@ from DeepResearch.src.datatypes.coding_base import CodeBlock
 from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.code_exec import CodeExecPrompts
 from DeepResearch.src.prompts.code_sandbox import CodeSandboxPrompts
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 
 class CodeGenerationAgent:
@@ -29,7 +31,9 @@ class CodeGenerationAgent:
 
     def __init__(
         self,
-        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+        model_name: Any | None = None,
+        model_role: str = "code_generation",
+        config: Mapping[str, Any] | None = None,
         max_retries: int = 3,
         timeout: float = 60.0,
     ):
@@ -40,7 +44,9 @@ class CodeGenerationAgent:
             max_retries: Maximum number of generation retries
             timeout: Timeout for generation
         """
-        self.model_name = model_name
+        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_role = model_role
+        self.config = dict(config or {})
         self.max_retries = max_retries
         self.timeout = timeout
 
@@ -49,7 +55,7 @@ class CodeGenerationAgent:
         self.python_agent = self._create_python_agent()
         self.universal_agent = self._create_universal_agent()
 
-    def _create_bash_agent(self) -> Agent:
+    def _create_bash_agent(self) -> Agent[None, str]:
         """Create agent specialized for bash command generation."""
         system_prompt = """
         You are an expert bash/shell scripting agent. Your task is to generate safe, efficient bash commands
@@ -73,12 +79,12 @@ class CodeGenerationAgent:
           Response: cp config.json config.json.backup && echo "Backup created: config.json.backup"
         """
 
-        return Agent(
+        return Agent[None, str](
             model=self.model_name,
             system_prompt=system_prompt,
         )
 
-    def _create_python_agent(self) -> Agent:
+    def _create_python_agent(self) -> Agent[None, str]:
         """Create agent specialized for Python code generation."""
         system_prompt = """
         You are an expert Python programmer. Your task is to generate Python code that accomplishes
@@ -139,12 +145,12 @@ class CodeGenerationAgent:
               return averages
         """
 
-        return Agent(
+        return Agent[None, str](
             model=self.model_name,
             system_prompt=system_prompt,
         )
 
-    def _create_universal_agent(self) -> Agent:
+    def _create_universal_agent(self) -> Agent[None, str]:
         """Create universal agent that determines code type and generates appropriately."""
         system_prompt = """
         You are an expert code generation agent. Analyze the user's request and determine whether
@@ -173,7 +179,7 @@ class CodeGenerationAgent:
         CODE: [your generated code here]
         """
 
-        return Agent(
+        return Agent[None, str](
             model=self.model_name,
             system_prompt=system_prompt,
         )
@@ -190,7 +196,9 @@ class CodeGenerationAgent:
         result = await self.bash_agent.run(
             f"Generate a bash command for: {description}"
         )
-        return str(result.output).strip()
+        if not hasattr(result, "data"):
+            return ""
+        return str(result.data).strip()
 
     async def generate_python_code(self, description: str) -> str:
         """Generate Python code from natural language description.
@@ -202,7 +210,9 @@ class CodeGenerationAgent:
             Generated Python code as string
         """
         result = await self.python_agent.run(f"Generate Python code for: {description}")
-        return str(result.output).strip()
+        if not hasattr(result, "data"):
+            return ""
+        return str(result.data).strip()
 
     async def generate_code(
         self, description: str, code_type: str | None = None
@@ -226,7 +236,9 @@ class CodeGenerationAgent:
         result = await self.universal_agent.run(
             f"Analyze and generate code for: {description}"
         )
-        response = str(result.output).strip()
+        if not hasattr(result, "data"):
+            return "unknown", ""
+        response = str(result.data).strip()
 
         # Parse response format: TYPE: [BASH|PYTHON]\nCODE: [code]
         lines = response.split("\n", 2)
@@ -293,7 +305,9 @@ class CodeExecutionAgent:
 
     def __init__(
         self,
-        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+        model_name: Any | None = None,
+        model_role: str = "code_generation",
+        config: Mapping[str, Any] | None = None,
         use_docker: bool = True,
         use_jupyter: bool = False,
         jupyter_config: dict[str, Any] | None = None,
@@ -310,7 +324,9 @@ class CodeExecutionAgent:
             max_retries: Maximum execution retries
             timeout: Execution timeout
         """
-        self.model_name = model_name
+        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_role = model_role
+        self.config = dict(config or {})
         self.use_docker = use_docker
         self.use_jupyter = use_jupyter
         self.jupyter_config = jupyter_config or {}
@@ -336,7 +352,20 @@ class CodeExecutionAgent:
         if use_jupyter:
             from DeepResearch.src.utils.jupyter.base import JupyterConnectionInfo
 
-            conn_info = JupyterConnectionInfo(**self.jupyter_config)
+            # Validate required fields for Jupyter connection
+            if (
+                "host" not in self.jupyter_config
+                or "use_https" not in self.jupyter_config
+            ):
+                msg = "jupyter_config must contain 'host' and 'use_https' when use_jupyter=True"
+                raise ValueError(msg)
+
+            conn_info = JupyterConnectionInfo(
+                host=str(self.jupyter_config["host"]),
+                use_https=bool(self.jupyter_config["use_https"]),
+                port=self.jupyter_config.get("port"),
+                token=self.jupyter_config.get("token"),
+            )
             self.jupyter_executor = JupyterCodeExecutor(conn_info)
 
         self.python_tool = PythonCodeExecutionTool(
@@ -425,7 +454,9 @@ class CodeExecutionAgentSystem:
 
     def __init__(
         self,
-        generation_model: str = DEFAULT_PYDANTIC_AI_MODEL,
+        generation_model: Any | None = None,
+        generation_model_role: str = "code_generation",
+        config: Mapping[str, Any] | None = None,
         execution_config: dict[str, Any] | None = None,
     ):
         """Initialize the complete code execution agent system.
@@ -434,7 +465,11 @@ class CodeExecutionAgentSystem:
             generation_model: Model for code generation
             execution_config: Configuration for code execution
         """
-        self.generation_model = generation_model
+        self.generation_model = generation_model or resolve_pydantic_ai_model(
+            config, generation_model_role
+        )
+        self.generation_model_role = generation_model_role
+        self.config = dict(config or {})
         self.execution_config = execution_config or {
             "use_docker": True,
             "use_jupyter": False,
@@ -442,24 +477,63 @@ class CodeExecutionAgentSystem:
             "timeout": 60.0,
         }
 
+        # Extract config values with proper type parsing
+        # Parse common string representations ("false", "0", "5") to avoid silently discarding config
+        def parse_bool(value: Any, default: bool) -> bool:
+            """Parse boolean from various representations."""
+            if isinstance(value, bool):
+                return value
+            if value is None:
+                return default
+            if isinstance(value, str):
+                return value.lower() in ("true", "1", "yes", "on")
+            return bool(value)
+
+        def parse_int(value: Any, default: int) -> int:
+            """Parse integer from various representations."""
+            if isinstance(value, int):
+                return value
+            if value is None:
+                return default
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return default
+
+        def parse_float(value: Any, default: float) -> float:
+            """Parse float from various representations."""
+            if isinstance(value, (int, float)):
+                return float(value)
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+
+        use_docker = parse_bool(self.execution_config.get("use_docker", True), True)
+        use_jupyter = parse_bool(self.execution_config.get("use_jupyter", False), False)
+        max_retries = parse_int(self.execution_config.get("max_retries", 3), 3)
+        timeout = parse_float(self.execution_config.get("timeout", 60.0), 60.0)
+
         # Initialize agents
         self.generation_agent = CodeGenerationAgent(
-            model_name=generation_model,
-            max_retries=int(self.execution_config.get("max_retries", 3)),
-            timeout=float(self.execution_config.get("timeout", 60.0)),
+            model_name=self.generation_model,
+            config=self.config,
+            max_retries=max_retries,
+            timeout=timeout,
         )
 
         self.execution_agent = CodeExecutionAgent(
-            model_name=generation_model,
-            use_docker=bool(self.execution_config.get("use_docker", True)),
-            use_jupyter=bool(self.execution_config.get("use_jupyter", False)),
-            jupyter_config=(
-                cast("dict[str, Any]", self.execution_config["jupyter_config"])
-                if isinstance(self.execution_config.get("jupyter_config"), dict)
-                else None
+            model_name=self.generation_model,
+            config=self.config,
+            use_docker=use_docker,
+            use_jupyter=use_jupyter,
+            jupyter_config=cast(
+                "dict[str, Any] | None", self.execution_config.get("jupyter_config")
             ),
-            max_retries=int(self.execution_config.get("max_retries", 3)),
-            timeout=float(self.execution_config.get("timeout", 60.0)),
+            max_retries=max_retries,
+            timeout=timeout,
         )
 
     async def process_request(

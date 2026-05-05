@@ -8,9 +8,12 @@ in Pydantic AI, supporting all VLLM features while maintaining OpenAI API compat
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+import aiohttp
 from pydantic import BaseModel, ConfigDict, Field
 
 from DeepResearch.src.datatypes.vllm_dataclass import (
@@ -40,6 +43,15 @@ from DeepResearch.src.datatypes.vllm_dataclass import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+logger = logging.getLogger(__name__)
+
+
+def _kwargs_for_model(
+    model_cls: type[BaseModel], kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    fields = model_cls.model_fields
+    return {k: v for k, v in kwargs.items() if k in fields}
+
 
 class VLLMClientError(Exception):
     """Base exception for VLLM client errors."""
@@ -54,13 +66,24 @@ class VLLMAPIError(VLLMClientError):
 
 
 class VLLMClient(BaseModel):
-    """Comprehensive VLLM client with OpenAI API compatibility."""
+    """Configuration holder and entrypoint for OpenAI-compatible vLLM HTTP calls.
+
+    Use :class:`VLLMAgent` for execution. Methods on this model delegate to
+    ``VLLMAgent(self)`` so a single implementation path handles simulate vs HTTP.
+    """
 
     base_url: str = Field("http://localhost:8000", description="VLLM server base URL")
     api_key: str | None = Field(None, description="API key for authentication")
     timeout: float = Field(60.0, description="Request timeout in seconds")
     max_retries: int = Field(3, description="Maximum number of retries")
     retry_delay: float = Field(1.0, description="Delay between retries in seconds")
+    transport_mode: Literal["simulate", "http"] = Field(
+        "simulate",
+        description=(
+            "simulate: deterministic local responses (CI-safe); "
+            "http: OpenAI-compatible POSTs to {base_url}/v1/..."
+        ),
+    )
 
     # VLLM-specific configuration
     vllm_config: VllmConfig | None = Field(None, description="VLLM configuration")
@@ -74,16 +97,69 @@ class VLLMClient(BaseModel):
                 "timeout": 60.0,
                 "max_retries": 3,
                 "retry_delay": 1.0,
+                "transport_mode": "simulate",
             }
         },
     )
 
+    async def chat_completions(
+        self, request: ChatCompletionRequest
+    ) -> ChatCompletionResponse:
+        """OpenAI-compatible chat completions (delegates to :class:`VLLMAgent`)."""
+        return await VLLMAgent(self).chat_completions(request)
+
+    async def completions(self, request: CompletionRequest) -> CompletionResponse:
+        """OpenAI-compatible completions (delegates to :class:`VLLMAgent`)."""
+        return await VLLMAgent(self).completions(request)
+
+    async def embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        """OpenAI-compatible embeddings (delegates to :class:`VLLMAgent`)."""
+        return await VLLMAgent(self).embeddings(request)
+
 
 class VLLMAgent:
-    """Pydantic AI agent wrapper for VLLM client."""
+    """OpenAI-compatible vLLM client (simulate or HTTP)."""
 
     def __init__(self, vllm_client: VLLMClient):
         self.client = vllm_client
+
+    def _v1_base(self) -> str:
+        u = self.client.base_url.rstrip("/")
+        if u.endswith("/v1"):
+            return u
+        return f"{u}/v1"
+
+    def _use_http(self) -> bool:
+        return self.client.transport_mode == "http"
+
+    async def _http_request(
+        self, method: str, path: str, json_body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        url = f"{self._v1_base()}{path}"
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.client.api_key:
+            key = self.client.api_key.strip()
+            if key and key.upper() != "EMPTY":
+                headers["Authorization"] = f"Bearer {key}"
+        timeout = aiohttp.ClientTimeout(total=self.client.timeout)
+        last_err: BaseException | None = None
+        for attempt in range(self.client.max_retries + 1):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.request(
+                        method, url, json=json_body, headers=headers
+                    ) as resp:
+                        text = await resp.text()
+                        if resp.status >= 400:
+                            raise VLLMAPIError(f"HTTP {resp.status}: {text[:500]}")
+                        return json.loads(text)
+            except (VLLMAPIError, aiohttp.ClientError, json.JSONDecodeError) as e:
+                last_err = e
+                if attempt < self.client.max_retries:
+                    await asyncio.sleep(self.client.retry_delay)
+                else:
+                    raise VLLMConnectionError(str(e)) from e
+        raise VLLMConnectionError(str(last_err)) from last_err
 
     async def _simulate_chat_reply(self, messages: list[dict[str, str]]) -> str:
         last = messages[-1].get("content", "") if messages else ""
@@ -95,28 +171,83 @@ class VLLMAgent:
     async def _simulate_embeddings(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * 384 for _ in texts]
 
+    async def _chat_text_from_http(self, request: ChatCompletionRequest) -> str:
+        payload = request.model_dump(exclude_none=True)
+        payload["stream"] = False
+        data = await self._http_request("POST", "/chat/completions", payload)
+        try:
+            choices = data.get("choices") or []
+            msg = (choices[0].get("message") or {}) if choices else {}
+            content = msg.get("content")
+            return content if isinstance(content, str) else ""
+        except (IndexError, KeyError, TypeError) as e:
+            raise VLLMAPIError(f"Unexpected chat completion response: {data!r}") from e
+
+    async def _completion_text_from_http(self, request: CompletionRequest) -> str:
+        payload = request.model_dump(exclude_none=True)
+        payload["stream"] = False
+        data = await self._http_request("POST", "/completions", payload)
+        try:
+            choices = data.get("choices") or []
+            text = choices[0].get("text") if choices else None
+            return text if isinstance(text, str) else ""
+        except (IndexError, KeyError, TypeError) as e:
+            raise VLLMAPIError(f"Unexpected completion response: {data!r}") from e
+
+    async def _embeddings_from_http(
+        self, request: EmbeddingRequest
+    ) -> list[list[float]]:
+        payload = request.model_dump(exclude_none=True)
+        data = await self._http_request("POST", "/embeddings", payload)
+        try:
+            out: list[list[float]] = []
+            for i, item in enumerate(data.get("data") or []):
+                emb = item.get("embedding")
+                if isinstance(emb, list):
+                    out.append([float(x) for x in emb])
+                else:
+                    raise VLLMAPIError(f"Missing embedding at index {i}")
+            return out
+        except VLLMAPIError:
+            raise
+        except (KeyError, TypeError, ValueError) as e:
+            raise VLLMAPIError(f"Unexpected embeddings response: {data!r}") from e
+
     async def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
-        """Chat with the VLLM model."""
-        request = ChatCompletionRequest(
-            model="vllm-model",
+        """Chat with the VLLM model (builds a request; no recursion)."""
+        kw = dict(kwargs)
+        model = cast("str", kw.pop("model", None) or "vllm-model")
+        kw.pop("messages", None)
+        req = ChatCompletionRequest(
+            model=model,
             messages=messages,
-            **kwargs,
+            **_kwargs_for_model(ChatCompletionRequest, kw),
         )
-        response = await self.chat_completions(request)
+        response = await self.chat_completions(req)
         content = response.choices[0].message.content
         return content if content is not None else ""
 
     async def complete(self, prompt: str | list[str], **kwargs: Any) -> str:
-        """Complete text with the VLLM model."""
-        request = CompletionRequest(model="vllm-model", prompt=prompt, **kwargs)
-        response = await self.completions(request)
+        """Complete text with the VLLM model (builds a request; no recursion)."""
+        kw = dict(kwargs)
+        model = cast("str", kw.pop("model", None) or "vllm-model")
+        kw.pop("prompt", None)
+        req = CompletionRequest(
+            model=model, prompt=prompt, **_kwargs_for_model(CompletionRequest, kw)
+        )
+        response = await self.completions(req)
         return response.choices[0].text
 
     async def embed(self, texts: str | list[str], **kwargs: Any) -> list[list[float]]:
-        """Generate embeddings for texts."""
+        """Generate embeddings for texts (builds a request; no recursion)."""
         inp: list[str] = [texts] if isinstance(texts, str) else list(texts)
-        request = EmbeddingRequest(model="vllm-embedding-model", input=inp, **kwargs)
-        response = await self.embeddings(request)
+        kw = dict(kwargs)
+        model = cast("str", kw.pop("model", None) or "vllm-embedding-model")
+        kw.pop("input", None)
+        req = EmbeddingRequest(
+            model=model, input=inp, **_kwargs_for_model(EmbeddingRequest, kw)
+        )
+        response = await self.embeddings(req)
         return [item.embedding for item in response.data]
 
     def to_pydantic_ai_agent(self, model_name: str = "vllm-agent"):
@@ -156,10 +287,8 @@ class VLLMAgent:
 
         return agent
 
-    # OpenAI-compatible API methods
     async def health(self) -> dict[str, Any]:
         """Check server health (OpenAI-compatible)."""
-        # Simple health check - try to get models
         try:
             models = await self.models()
             return {"status": "healthy", "models": len(models.get("data", []))}
@@ -168,15 +297,21 @@ class VLLMAgent:
 
     async def models(self) -> dict[str, Any]:
         """List available models (OpenAI-compatible)."""
-        # Return a mock response since VLLM doesn't have a models endpoint
-        return {"object": "list", "data": [{"id": "vllm-model", "object": "model"}]}
+        if not self._use_http():
+            return {"object": "list", "data": [{"id": "vllm-model", "object": "model"}]}
+        return await self._http_request("GET", "/models", None)
 
     async def chat_completions(
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:
         """Create chat completion (OpenAI-compatible)."""
-        msgs = list(request.messages)
-        response_text = await self._simulate_chat_reply(msgs)
+        messages = [
+            {"role": msg["role"], "content": msg["content"]} for msg in request.messages
+        ]
+        if self._use_http():
+            response_text = await self._chat_text_from_http(request)
+        else:
+            response_text = await self._simulate_chat_reply(messages)
         return ChatCompletionResponse(
             id=f"chatcmpl-{time.time()}",
             object="chat.completion",
@@ -200,7 +335,6 @@ class VLLMAgent:
         self, request: ChatCompletionRequest
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream chat completion (OpenAI-compatible)."""
-        # For simplicity, just yield the full response
         response = await self.chat_completions(request)
         choice = response.choices[0]
         yield {
@@ -224,7 +358,10 @@ class VLLMAgent:
             if isinstance(request.prompt, str)
             else "\n".join(request.prompt)
         )
-        response_text = await self._simulate_completion(prompt_text)
+        if self._use_http():
+            response_text = await self._completion_text_from_http(request)
+        else:
+            response_text = await self._simulate_completion(prompt_text)
         return CompletionResponse(
             id=f"cmpl-{time.time()}",
             object="text_completion",
@@ -245,7 +382,10 @@ class VLLMAgent:
         texts = (
             [request.input] if isinstance(request.input, str) else list(request.input)
         )
-        vectors = await self._simulate_embeddings(texts)
+        if self._use_http():
+            vectors = await self._embeddings_from_http(request)
+        else:
+            vectors = await self._simulate_embeddings(texts)
         return EmbeddingResponse(
             object="list",
             data=[
@@ -262,34 +402,46 @@ class VLLMAgent:
 
     async def batch_request(self, request: BatchRequest) -> BatchResponse:
         """Process batch request."""
+        started = time.perf_counter()
         results: list[
             ChatCompletionResponse | CompletionResponse | EmbeddingResponse
         ] = []
-        started = time.perf_counter()
-        for req in request.requests:
-            if isinstance(req, ChatCompletionRequest):
-                results.append(await self.chat_completions(req))
-            elif isinstance(req, CompletionRequest):
-                results.append(await self.completions(req))
-            elif isinstance(req, EmbeddingRequest):
-                results.append(await self.embeddings(req))
-
+        errors: list[dict[str, Any]] = []
         total = len(list(request.requests))
+
+        for index, req in enumerate(request.requests):
+            try:
+                if isinstance(req, ChatCompletionRequest):
+                    results.append(await self.chat_completions(req))
+                elif isinstance(req, CompletionRequest):
+                    results.append(await self.completions(req))
+                elif isinstance(req, EmbeddingRequest):
+                    results.append(await self.embeddings(req))
+                else:
+                    errors.append(
+                        {
+                            "request_index": index,
+                            "error": f"Unsupported request type: {type(req)!r}",
+                        }
+                    )
+            except (VLLMClientError, aiohttp.ClientError, OSError) as e:
+                logger.warning("batch item %s failed: %s", index, e)
+                errors.append({"request_index": index, "error": str(e)})
+
         elapsed = time.perf_counter() - started
-        ok = len(results)
         return BatchResponse(
             batch_id=f"batch-{time.time()}",
             responses=results,
-            errors=[],
+            errors=errors,
             total_requests=total,
-            successful_requests=ok,
-            failed_requests=total - ok,
+            successful_requests=len(results),
+            failed_requests=len(errors),
             processing_time=elapsed,
         )
 
     async def close(self) -> None:
         """Close client connections."""
-        # No-op for this implementation
+        # aiohttp sessions are per-request; nothing to close
 
 
 class VLLMClientBuilder:
@@ -301,6 +453,7 @@ class VLLMClientBuilder:
             "timeout": 60.0,
             "max_retries": 3,
             "retry_delay": 1.0,
+            "transport_mode": "simulate",
         }
         self._vllm_config = None
 
@@ -325,6 +478,13 @@ class VLLMClientBuilder:
         """Set retry configuration."""
         self._config["max_retries"] = max_retries
         self._config["retry_delay"] = retry_delay
+        return self
+
+    def with_transport_mode(
+        self, mode: Literal["simulate", "http"]
+    ) -> VLLMClientBuilder:
+        """Use simulate (default) or HTTP OpenAI-compatible API calls."""
+        self._config["transport_mode"] = mode
         return self
 
     def with_vllm_config(self, config: VllmConfig) -> VLLMClientBuilder:
@@ -421,12 +581,15 @@ class VLLMClientBuilder:
 
     def build(self) -> VLLMClient:
         """Build the VLLM client."""
+        tm = self._config.get("transport_mode", "simulate")
+        mode = cast("Literal['simulate', 'http']", tm)
         return VLLMClient(
-            base_url=str(self._config["base_url"]),
+            base_url=str(self._config.get("base_url", "http://localhost:8000")),
             api_key=cast("str | None", self._config.get("api_key")),
-            timeout=float(self._config["timeout"]),
-            max_retries=int(self._config["max_retries"]),
-            retry_delay=float(self._config["retry_delay"]),
+            timeout=float(self._config.get("timeout", 60.0)),
+            max_retries=int(self._config.get("max_retries", 3)),
+            retry_delay=float(self._config.get("retry_delay", 1.0)),
+            transport_mode=mode,
             vllm_config=self._vllm_config,
         )
 

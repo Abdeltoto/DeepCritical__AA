@@ -7,12 +7,35 @@ workflow type-safe and runnable without tightly coupling to graph internals,
 we implement a lightweight explicit state-machine loop instead.
 """
 
-from __future__ import annotations
-
 import inspect
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Optional import for pydantic_graph
+try:
+    from pydantic_graph import BaseNode, End, Graph
+except ImportError:
+    # Create placeholder classes for when pydantic_graph is not available
+    from typing import Generic, TypeVar
+
+    T = TypeVar("T")
+
+    class Graph:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(self, state: Any) -> Any:
+            """Stub method for when pydantic_graph is not available."""
+
+    class BaseNode(Generic[T]):
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class End:
+        def __init__(self, *args, **kwargs):
+            pass
+
 
 from DeepResearch.src.datatypes.agent_framework_content import TextContent
 from DeepResearch.src.datatypes.agent_framework_types import AgentRunResponse
@@ -21,7 +44,7 @@ from DeepResearch.src.utils.execution_status import ExecutionStatus
 
 
 class _Node(Protocol):
-    def run(self, state: CodeExecutionWorkflowState) -> Any: ...
+    def run(self, state: "CodeExecutionWorkflowState") -> Any: ...
 
 
 class CodeExecutionWorkflowState(BaseModel):
@@ -518,17 +541,21 @@ class CodeExecutionWorkflow:
             max_improvement_attempts=max_improvement_attempts,
         )
 
-        node: _Node | None = self._start_node
-        while node is not None:
-            step_result = node.run(initial_state)
+        # Execute explicit state-machine loop (nodes return the next step).
+        state = initial_state
+        current: Any = self._start_node
+        while current is not None:
+            step = getattr(current, "run", None)
+            if step is None:
+                break
+            step_result = step(state)
             if inspect.isawaitable(step_result):
                 step_result = await step_result
-            node = (
-                step_result
-                if step_result is None or hasattr(step_result, "run")
-                else None
-            )
-        return initial_state
+            if step_result is None:
+                break
+            current = step_result
+
+        return state
 
 
 # Convenience functions for direct usage

@@ -1500,10 +1500,20 @@ def test_agent_creation():
     }
     for agent_type, agent_class in agent_classes.items():
         with patch("DeepResearch.agents.Agent"):
-            agent = create_agent(agent_type=agent_type)
+            kwargs: dict = {}
+            if agent_type in {
+                AgentType.DEEP_AGENT_PLANNING,
+                AgentType.DEEP_AGENT_FILESYSTEM,
+                AgentType.DEEP_AGENT_RESEARCH,
+                AgentType.DEEP_AGENT_ORCHESTRATION,
+                AgentType.DEEP_AGENT_GENERAL,
+            }:
+                kwargs["config"] = {"deep_agent": {"enabled": True}}
+            agent = create_agent(agent_type=agent_type, **kwargs)
 
             assert agent.agent_type == agent_type
-            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
+            assert isinstance(agent.model_name, str)
+            assert agent.model_name
             assert agent._agent is not None
             assert isinstance(agent, agent_class)
 

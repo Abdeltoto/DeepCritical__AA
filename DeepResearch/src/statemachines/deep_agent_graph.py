@@ -22,7 +22,6 @@ from DeepResearch.src.datatypes.deep_agent_types import (
     CustomSubAgent,
     SubAgent,
 )
-from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.tools.deep_agent_middleware import (
     create_default_middleware_pipeline,
 )
@@ -34,12 +33,17 @@ from DeepResearch.src.tools.deep_agent_tools import (
     write_file_tool,
     write_todos_tool,
 )
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 
 class AgentBuilderConfig(BaseModel):
     """Configuration for agent builder."""
 
-    model_name: str = Field(default=DEFAULT_PYDANTIC_AI_MODEL, description="Model name")
+    model_name: str | None = Field(None, description="Explicit model override")
+    model_role: str = Field("deep_agent", description="Model-registry role")
+    models: dict[str, Any] | None = Field(
+        None, description="Optional model registry configuration"
+    )
     instructions: str = Field("", description="Additional instructions")
     tools: list[str] = Field(default_factory=list, description="Tool names to include")
     subagents: list[SubAgent | CustomSubAgent] = Field(
@@ -417,8 +421,12 @@ class AgentBuilder:
     def build_agent(self) -> Agent[DeepAgentState, str]:
         """Build an agent with the configured middleware and tools."""
         # Create base agent
+        model = self.config.model_name or resolve_pydantic_ai_model(
+            {"models": self.config.models} if self.config.models else None,
+            self.config.model_role,
+        )
         agent = Agent(
-            model=self.config.model_name,
+            model=model,
             system_prompt=self._build_system_prompt(),
             deps_type=DeepAgentState,
         )
@@ -465,11 +473,11 @@ class AgentBuilder:
                 # Add tool if method exists
                 if hasattr(agent, "add_tool") and callable(agent.add_tool):
                     add_tool_method = agent.add_tool
-                    add_tool_method(tool_map[tool_name])  # type: ignore
+                    add_tool_method(tool_map[tool_name])
                 elif hasattr(agent, "tools") and hasattr(agent.tools, "append"):
                     tools_attr = agent.tools
                     if hasattr(tools_attr, "append") and callable(tools_attr.append):
-                        tools_attr.append(tool_map[tool_name])  # type: ignore
+                        tools_attr.append(tool_map[tool_name])
 
     def _add_middleware(self, agent: Agent[DeepAgentState, str]) -> None:
         """Add middleware to the agent."""
@@ -498,7 +506,7 @@ class AgentBuilder:
 
 # Factory functions
 def create_agent_builder(
-    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+    model_name: str | None = None,
     instructions: str = "",
     tools: list[str] | None = None,
     subagents: list[SubAgent | CustomSubAgent] | None = None,
@@ -516,7 +524,7 @@ def create_agent_builder(
 
 
 def create_simple_agent(
-    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+    model_name: str | None = None,
     instructions: str = "",
     tools: list[str] | None = None,
 ) -> Agent[DeepAgentState, str]:
@@ -529,7 +537,7 @@ def create_deep_agent(
     tools: list[str] | None = None,
     instructions: str = "",
     subagents: list[SubAgent | CustomSubAgent] | None = None,
-    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+    model_name: str | None = None,
     **kwargs,
 ) -> Agent[DeepAgentState, str]:
     """Create a deep agent with full capabilities."""
@@ -557,7 +565,7 @@ def create_async_deep_agent(
     tools: list[str] | None = None,
     instructions: str = "",
     subagents: list[SubAgent | CustomSubAgent] | None = None,
-    model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+    model_name: str | None = None,
     **kwargs,
 ) -> Agent[DeepAgentState, str]:
     """Create an async deep agent with full capabilities."""

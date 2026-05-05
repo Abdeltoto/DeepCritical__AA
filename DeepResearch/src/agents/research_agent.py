@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 try:
     from pydantic_ai import Agent
 except Exception:  # pragma: no cover
-    Agent = None  # type: ignore
+    Agent = None
 
 
 from DeepResearch.src.datatypes.research import ResearchOutcome

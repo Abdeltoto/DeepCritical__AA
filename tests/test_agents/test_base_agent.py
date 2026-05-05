@@ -6,6 +6,7 @@ including initialization, tool registration, execution, and error handling.
 """
 
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -20,6 +21,19 @@ from DeepResearch.src.datatypes.agents import (
     ExecutionHistory,
 )
 from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
+
+@contextmanager
+def mock_base_agent_inner(mock_inner):
+    """Inject a mock pydantic-ai agent (patching ``Agent[...]()`` is unreliable)."""
+
+    def _init(self, system_prompt, instructions):
+        self._agent = mock_inner
+        self._initialization_error = None
+        self._register_tools()
+
+    with patch.object(BaseAgent, "_initialize_agent", _init):
+        yield
 
 
 # Fixtures
@@ -109,16 +123,32 @@ class TestBaseAgentInitialization:
 
         assert agent.agent_type == AgentType.PARSER
 
-    @patch("DeepResearch.agents.Agent")
-    def test_agent_initialization_failure_handling(
-        self, mock_agent_class, test_agent_class
-    ):
+    def test_agent_initialization_failure_handling(self, test_agent_class):
         """Test agent handles initialization failures gracefully."""
-        mock_agent_class.side_effect = Exception("Initialization failed")
 
-        agent = test_agent_class()
+        def fail_init(self, system_prompt, instructions):
+            self._agent = None
+            self._initialization_error = "Initialization failed"
+
+        with patch.object(BaseAgent, "_initialize_agent", fail_init):
+            agent = test_agent_class()
 
         assert agent._agent is None
+        assert agent._initialization_error == "Initialization failed"
+
+    @pytest.mark.asyncio
+    async def test_execute_surfaces_initialization_error(self, test_agent_class):
+        """Failed pydantic-ai init should surface on execute, not silent empty state."""
+
+        def bad_init(self, system_prompt, instructions):
+            self._agent = None
+            self._initialization_error = "bad model"
+
+        with patch.object(BaseAgent, "_initialize_agent", bad_init):
+            agent = test_agent_class()
+        result = await agent.execute("hello", None)
+        assert result.success is False
+        assert "bad model" in (result.error or "")
 
     def test_multiple_agents_independent(self, test_agent_class):
         """Test that multiple agent instances are independent."""
@@ -170,7 +200,7 @@ class TestAgentExecution:
     @pytest.mark.asyncio
     async def test_execute_success(self, test_agent_class, mock_pydantic_agent):
         """Test successful agent execution."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             # Mock successful execution
@@ -191,7 +221,7 @@ class TestAgentExecution:
         self, test_agent_class, agent_dependencies, mock_pydantic_agent
     ):
         """Test execution with custom dependencies."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_result = Mock()
@@ -206,7 +236,7 @@ class TestAgentExecution:
     @pytest.mark.asyncio
     async def test_execute_failure(self, test_agent_class, mock_pydantic_agent):
         """Test agent execution failure handling."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             # Mock execution failure
@@ -221,20 +251,25 @@ class TestAgentExecution:
     @pytest.mark.asyncio
     async def test_execute_uninitialized_agent(self, test_agent_class):
         """Test execution with uninitialized agent."""
-        with patch("DeepResearch.agents.Agent", side_effect=Exception("Init failed")):
+
+        def _fail_init(self, system_prompt, instructions):
+            self._agent = None
+            self._initialization_error = "Init failed"
+
+        with patch.object(BaseAgent, "_initialize_agent", _fail_init):
             agent = test_agent_class()
 
             result = await agent.execute("test input")
 
             assert result.success is False
-            assert "not properly initialized" in result.error
+            assert "Init failed" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_execute_status_transitions(
         self, test_agent_class, mock_pydantic_agent
     ):
         """Test agent status transitions during execution."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             assert agent.status == AgentStatus.IDLE
@@ -253,7 +288,7 @@ class TestAgentExecution:
         self, test_agent_class, mock_pydantic_agent
     ):
         """Test processing of different result formats."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             # Test with .output attribute
@@ -286,7 +321,7 @@ class TestSynchronousExecution:
 
     def test_execute_sync_success(self, test_agent_class, mock_pydantic_agent):
         """Test synchronous execution wrapper."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_result = Mock()
@@ -300,7 +335,7 @@ class TestSynchronousExecution:
 
     def test_execute_sync_failure(self, test_agent_class, mock_pydantic_agent):
         """Test synchronous execution with failure."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_pydantic_agent.run.side_effect = Exception("Sync failure")
@@ -318,7 +353,7 @@ class TestExecutionHistory:
     @pytest.mark.asyncio
     async def test_history_recording(self, test_agent_class, mock_pydantic_agent):
         """Test that execution history is recorded."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_result = Mock()
@@ -335,7 +370,7 @@ class TestExecutionHistory:
         self, test_agent_class, mock_pydantic_agent
     ):
         """Test that failures are recorded in history."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_pydantic_agent.run.side_effect = Exception("Test failure")
@@ -394,7 +429,7 @@ class TestErrorHandling:
         self, test_agent_class, mock_pydantic_agent
     ):
         """Test handling of execution timeouts."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_pydantic_agent.run.side_effect = asyncio.TimeoutError("Timeout")
@@ -407,7 +442,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_input_handling(self, test_agent_class, mock_pydantic_agent):
         """Test handling of invalid input."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_pydantic_agent.run.side_effect = ValueError("Invalid input")
@@ -419,7 +454,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_multiple_failures(self, test_agent_class, mock_pydantic_agent):
         """Test agent behavior with multiple failures."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_pydantic_agent.run.side_effect = Exception("Failure")
@@ -442,7 +477,7 @@ class TestDefaultPrompts:
             mock_prompt.return_value = "Test system prompt"
 
             # Agent initialization calls get_system_prompt, so we use side_effect
-            with patch("DeepResearch.agents.Agent"):
+            with mock_base_agent_inner(Mock(spec=Agent)):
                 agent = test_agent_class()
 
             # Now test the method directly
@@ -458,7 +493,7 @@ class TestDefaultPrompts:
             mock_instr.return_value = "Test instructions"
 
             # Agent initialization calls get_instructions, so we use side_effect
-            with patch("DeepResearch.agents.Agent"):
+            with mock_base_agent_inner(Mock(spec=Agent)):
                 agent = test_agent_class()
 
             # Now test the method directly
@@ -476,7 +511,7 @@ class TestParserAgent:
     @pytest.mark.asyncio
     async def test_parser_agent_initialization(self):
         """Test ParserAgent initialization."""
-        with patch("DeepResearch.agents.Agent"):
+        with mock_base_agent_inner(Mock(spec=Agent)):
             agent = ParserAgent()
 
             assert agent.agent_type == AgentType.PARSER
@@ -485,7 +520,7 @@ class TestParserAgent:
     @pytest.mark.asyncio
     async def test_parse_question_success(self, mock_pydantic_agent):
         """Test successful question parsing."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = ParserAgent()
 
             mock_result = Mock()
@@ -500,7 +535,7 @@ class TestParserAgent:
     @pytest.mark.asyncio
     async def test_parse_question_failure(self, mock_pydantic_agent):
         """Test question parsing failure."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = ParserAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Parse error")
@@ -512,7 +547,7 @@ class TestParserAgent:
 
     def test_parse_sync_method(self, mock_pydantic_agent):
         """Test synchronous parse method."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = ParserAgent()
 
             mock_result = Mock()
@@ -531,7 +566,7 @@ class TestParserAgent:
 
     def test_parse_sync_with_failure(self, mock_pydantic_agent):
         """Test synchronous parse with failure."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = ParserAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Parse failed")
@@ -549,7 +584,7 @@ class TestBaseAgentIntegration:
     @pytest.mark.asyncio
     async def test_full_execution_flow(self, test_agent_class, mock_pydantic_agent):
         """Test complete execution flow from initialization to result."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             # Initialize agent
             agent = test_agent_class(
                 model_name="test-model",
@@ -575,7 +610,7 @@ class TestBaseAgentIntegration:
         self, test_agent_class, mock_pydantic_agent
     ):
         """Test state management across multiple executions."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with mock_base_agent_inner(mock_pydantic_agent):
             agent = test_agent_class()
 
             mock_result = Mock()

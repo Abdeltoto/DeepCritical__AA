@@ -503,7 +503,7 @@ mcp_server = {class_name}()
         if not deployment:
             raise ValueError(f"Server '{server_name}' not deployed")
 
-        if deployment.status != "running":
+        if deployment.status != MCPServerStatus.RUNNING:
             raise ValueError(
                 f"Server '{server_name}' is not running (status: {deployment.status})"
             )
@@ -564,13 +564,12 @@ mcp_server = {class_name}()
 
         if server_name not in self.code_executors:
             # Create code executor if it doesn't exist
+            timeout_val = kwargs.get("timeout", 60)
             self.code_executors[server_name] = DockerCommandLineCodeExecutor(
-                image=str(
-                    deployment.configuration.image
-                    if hasattr(deployment.configuration, "image")
-                    else "python:3.11-slim"
-                ),
-                timeout=kwargs.get("timeout", 60),
+                image=deployment.configuration.container_image,
+                timeout=int(timeout_val)
+                if not isinstance(timeout_val, int)
+                else timeout_val,
                 work_dir=f"/tmp/{server_name}_code_blocks_compose",
             )
 

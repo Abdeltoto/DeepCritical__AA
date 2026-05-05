@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 from typing import Any
@@ -19,7 +20,11 @@ from DeepResearch.src.tools.registry import (
 
 
 class _PrimeRunnerAdapter(CanonicalTool):
-    """Adapt PRIME ToolRunner instances to canonical registry interface."""
+    """Adapt PRIME ToolRunner instances to the canonical async registry.
+
+    ``ToolRunner`` implementations are synchronous; :meth:`arun` delegates to
+    :meth:`run` via :func:`asyncio.to_thread` for non-blocking callers.
+    """
 
     def __init__(self, tool_spec: ToolSpec, runner: ToolRunner):
         self._runner = runner
@@ -48,7 +53,7 @@ class _PrimeRunnerAdapter(CanonicalTool):
         )
 
     async def arun(self, params: dict[str, Any]) -> CanonicalExecutionResult:
-        raise NotImplementedError
+        return await asyncio.to_thread(self.run, params)
 
 
 class ToolRegistry:

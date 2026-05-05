@@ -10,8 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.workflow_orchestration import HypothesisDataset
+from DeepResearch.src.utils.model_registry import resolve_model_name
 
 
 class HypothesisType(str, Enum):
@@ -77,7 +77,9 @@ class HypothesisGenerationParams(BaseModel):
     enable_critic_pass: bool = False
     max_hypotheses: int = Field(10, ge=1, le=50)
     max_evidence_chars: int = Field(12000, ge=1000, le=100000)
-    model_name: str = Field(default=DEFAULT_PYDANTIC_AI_MODEL)
+    model_name: str = Field(
+        default_factory=lambda: resolve_model_name(None, "default"),
+    )
     temperature: float = Field(0.4, ge=0.0, le=2.0)
     num_results: int = Field(4, ge=1, le=20)
     chunk_size: int = Field(1000, ge=100, le=8000)
@@ -97,7 +99,7 @@ class HypothesisGenerationParams(BaseModel):
         default_model: str | None = None,
     ) -> HypothesisGenerationParams:
         """Build params from orchestration ``parameters`` dict with safe defaults."""
-        dm = default_model or DEFAULT_PYDANTIC_AI_MODEL
+        dm = default_model or resolve_model_name(None, "default")
         base: dict[str, Any] = {
             "hypothesis_types": data.get(
                 "hypothesis_types",

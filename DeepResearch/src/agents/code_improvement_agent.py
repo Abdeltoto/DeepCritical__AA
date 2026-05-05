@@ -8,6 +8,7 @@ providing intelligent code fixes and optimizations.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic_ai import Agent
@@ -17,6 +18,7 @@ from DeepResearch.src.datatypes.coding_base import CodeBlock
 from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.code_exec import CodeExecPrompts
 from DeepResearch.src.utils.code_utils import infer_lang
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 
 class CodeImprovementAgent:
@@ -24,7 +26,9 @@ class CodeImprovementAgent:
 
     def __init__(
         self,
-        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+        model_name: Any | None = None,
+        model_role: str = "code_generation",
+        config: Mapping[str, Any] | None = None,
         max_improvement_attempts: int = 3,
         timeout: float = 60.0,
     ):
@@ -35,7 +39,9 @@ class CodeImprovementAgent:
             max_improvement_attempts: Maximum number of improvement attempts
             timeout: Timeout for improvement operations
         """
-        self.model_name = model_name
+        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_role = model_role
+        self.config = dict(config or {})
         self.max_improvement_attempts = max_improvement_attempts
         self.timeout = timeout
 
@@ -44,7 +50,7 @@ class CodeImprovementAgent:
         self.analysis_agent = self._create_analysis_agent()
         self.optimization_agent = self._create_optimization_agent()
 
-    def _create_improvement_agent(self) -> Agent:
+    def _create_improvement_agent(self) -> Agent[None, str]:
         """Create agent specialized for fixing code errors."""
         system_prompt = """
         You are an expert code improvement agent. Your task is to analyze code execution errors
@@ -72,12 +78,12 @@ class CodeImprovementAgent:
         EXPLANATION: [what was fixed and why]
         """
 
-        return Agent(
+        return Agent[None, str](
             model=self.model_name,
             system_prompt=system_prompt,
         )
 
-    def _create_analysis_agent(self) -> Agent:
+    def _create_analysis_agent(self) -> Agent[None, str]:
         """Create agent specialized for error analysis."""
         system_prompt = """
         You are an expert error analysis agent. Your task is to analyze execution errors
@@ -105,12 +111,12 @@ class CodeImprovementAgent:
         PREVENTION: [how to avoid similar errors in future]
         """
 
-        return Agent(
+        return Agent[None, str](
             model=self.model_name,
             system_prompt=system_prompt,
         )
 
-    def _create_optimization_agent(self) -> Agent:
+    def _create_optimization_agent(self) -> Agent[None, str]:
         """Create agent specialized for code optimization."""
         system_prompt = """
         You are an expert code optimization agent. Your task is to improve code
@@ -139,7 +145,7 @@ class CodeImprovementAgent:
         ROBUSTNESS_IMPROVEMENTS: [error handling and validation additions]
         """
 
-        return Agent(
+        return Agent[None, str](
             model=self.model_name,
             system_prompt=system_prompt,
         )
@@ -190,7 +196,10 @@ Provide a detailed analysis of what went wrong and how to fix it.
 """
 
         result = await self.analysis_agent.run(analysis_prompt)
-        analysis_response = str(result.output).strip()
+        if not hasattr(result, "data"):
+            msg = "RunResult missing data attribute"
+            raise AttributeError(msg)
+        analysis_response = str(result.data).strip()
 
         # Parse the structured response
         analysis = self._parse_analysis_response(analysis_response)
@@ -243,7 +252,10 @@ Provide a detailed analysis of what went wrong and how to fix it.
             agent = self.improvement_agent
 
         result = await agent.run(improvement_prompt)
-        improvement_response = str(result.output).strip()
+        if not hasattr(result, "data"):
+            msg = "RunResult missing data attribute"
+            raise AttributeError(msg)
+        improvement_response = str(result.data).strip()
 
         # Parse the improvement response
         improved_code = self._extract_improved_code(improvement_response)

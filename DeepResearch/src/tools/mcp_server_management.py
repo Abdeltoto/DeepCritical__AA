@@ -36,6 +36,7 @@ from ..tools.bioinformatics.freebayes_server import FreeBayesServer
 from ..tools.bioinformatics.hisat2_server import HISAT2Server
 from ..tools.bioinformatics.kallisto_server import KallistoServer
 from ..tools.bioinformatics.macs3_server import MACS3Server
+from ..tools.bioinformatics.mafft_server import MAFFTServer
 from ..tools.bioinformatics.meme_server import MEMEServer
 from ..tools.bioinformatics.minimap2_server import Minimap2Server
 from ..tools.bioinformatics.multiqc_server import MultiQCServer
@@ -51,6 +52,7 @@ from ..utils.testcontainers_deployer import (
     TestcontainersDeployer,
 )
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
+from .mcp_server_tools import MCP_STUB_SERVER_NAMES
 
 
 class MCPServerProtocol(Protocol):
@@ -165,6 +167,8 @@ SERVER_IMPLEMENTATIONS = {
     # Variant Analysis
     "bcftools": BCFtoolsServer,
     "freebayes": FreeBayesServer,
+    # Multiple Sequence Alignment
+    "mafft": MAFFTServer,
 }
 
 
@@ -295,6 +299,7 @@ class MCPServerListTool(ToolRunner):
                     "name": server_name,
                     "type": getattr(server_class, "__name__", "Unknown"),
                     "description": getattr(server_class, "__doc__", "").strip(),
+                    "implemented": server_name not in MCP_STUB_SERVER_NAMES,
                 }
 
                 if include_tools:

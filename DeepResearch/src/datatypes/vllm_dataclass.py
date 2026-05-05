@@ -1253,6 +1253,8 @@ class AsyncLLMEngine(BaseModel):
 
     def get_engine(self) -> LLMEngine | None:
         """Get the underlying engine."""
+        if self.engine is None:
+            self.engine = LLMEngine(self.config)
         return self.engine
 
 

@@ -176,7 +176,7 @@ jobs:
     - name: Install linting tools
       run: |
         python -m pip install --upgrade pip
-        pip install ruff==0.14.0
+        pip install ruff==0.14.6
 
     - name: Run linting (Ruff)
       run: |
@@ -207,5 +207,5 @@ jobs:
 
     - name: Run ty type check
       run: |
-        uv run ty --version
-        uv run ty check
+        uvx ty==0.0.1a21 --version
+        uvx ty==0.0.1a21 check DeepResearch

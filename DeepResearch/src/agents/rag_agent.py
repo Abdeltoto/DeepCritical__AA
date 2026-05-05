@@ -11,6 +11,8 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+from omegaconf import DictConfig
+
 from ..datatypes.rag import (
     Document,
     Embeddings,
@@ -30,9 +32,11 @@ class RAGAgent:
 
     def __init__(
         self,
+        cfg: DictConfig,
         vector_store_config: VectorStoreConfig | None = None,
         embeddings: Embeddings | None = None,
     ):
+        self.cfg = cfg
         self.agent_type = "rag"
         self.vector_store: VectorStore | None = None
         self.embeddings: Embeddings | None = embeddings
@@ -48,11 +52,7 @@ class RAGAgent:
                 "Vector store config must be provided when embeddings is specified"
             )
 
-    def execute_rag_query(self, query: RAGQuery) -> RAGResponse:
-        """Synchronous wrapper for `execute_rag_query_async`."""
-        return asyncio.run(self.execute_rag_query_async(query))
-
-    async def execute_rag_query_async(self, query: RAGQuery) -> RAGResponse:
+    async def execute_rag_query(self, query: RAGQuery) -> RAGResponse:
         """Execute a RAG query and return the response."""
         start_time = time.time()
 
@@ -96,7 +96,7 @@ class RAGAgent:
     async def retrieve_documents(
         self, query: str, limit: int = 5
     ) -> list[SearchResult]:
-        """Retrieve relevant search results for a query."""
+        """Retrieve relevant documents for a query."""
         if not self.vector_store:
             return []
 
@@ -106,21 +106,23 @@ class RAGAgent:
                 query=query,
                 search_type=SearchType.SIMILARITY,
             )
-            return list(search_results[:limit])
+
+            # Return SearchResult objects (with document, score, rank)
+            return search_results[:limit]
         except Exception as e:
             print(f"Error during document retrieval: {e}")
             return []
 
-    def generate_answer(self, query: str, results: list[SearchResult]) -> str:
-        """Generate an answer based on retrieved search results."""
-        if not results:
+    def generate_answer(self, query: str, search_results: list[SearchResult]) -> str:
+        """Generate an answer based on retrieved documents."""
+        if not search_results:
             return "No relevant documents found to answer the query."
 
         # For now, return a simple concatenation
         # In a real implementation, this would use an LLM to generate an answer
         doc_summaries = []
-        for i, r in enumerate(results, 1):
-            doc = r.document
+        for i, result in enumerate(search_results, 1):
+            doc = result.document
             content_preview = (
                 doc.content[:200] + "..." if len(doc.content) > 200 else doc.content
             )
@@ -128,19 +130,20 @@ class RAGAgent:
 
         return f"""Based on the retrieved documents, here's what I found regarding: "{query}"
 
-Context from {len(results)} documents:
+Context from {len(search_results)} documents:
 {chr(10).join(doc_summaries)}
 
 Note: This is a basic implementation. A full RAG system would use an LLM to generate a more coherent and contextual answer based on the retrieved documents."""
 
-    def _build_context(self, results: list[SearchResult]) -> str:
+    def _build_context(self, search_results: list[SearchResult]) -> str:
         """Build context string from retrieved documents."""
-        if not results:
+        if not search_results:
             return ""
 
         context_parts = []
-        for i, r in enumerate(results, 1):
-            context_parts.append(f"[Document {i}]\n{r.document.content}\n")
+        for i, result in enumerate(search_results, 1):
+            doc = result.document
+            context_parts.append(f"[Document {i}]\n{doc.content}\n")
 
         return "\n".join(context_parts)
 
@@ -185,7 +188,7 @@ Note: This is a basic implementation. A full RAG system would use an LLM to gene
                 query=query,
                 search_type=search_type,
             )
-            return list(results[:limit])
+            return results[:limit]
         except Exception as e:
             print(f"Error searching documents: {e}")
             return []

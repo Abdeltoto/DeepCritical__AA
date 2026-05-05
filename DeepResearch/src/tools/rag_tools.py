@@ -11,11 +11,10 @@ from DeepResearch.src.datatypes.rag import (
     RAGQuery,
     SearchType,
     VectorStoreConfig,
-    VectorStoreType,
     VLLMConfig,
 )
 from DeepResearch.src.datatypes.vllm_integration import VLLMEmbeddings, VLLMLLMProvider
-from DeepResearch.src.vector_stores.neo4j_vector_store import create_neo4j_vector_store
+from DeepResearch.src.vector_stores import create_vector_store
 
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
 
@@ -72,16 +71,12 @@ def _parse_rag_configs(
     return embeddings_cfg, vector_store_cfg, llm_cfg
 
 
-async def _build_neo4j_vector_store(
+async def _build_rag_stack(
     embeddings_cfg: EmbeddingsConfig, vector_store_cfg: VectorStoreConfig
 ):
-    # We currently implement Neo4j as the production-grade vector store.
-    if vector_store_cfg.store_type != VectorStoreType.NEO4J:
-        msg = f"Vector store '{vector_store_cfg.store_type.value}' not implemented yet"
-        raise NotImplementedError(msg)
-
+    """Create embeddings + vector store via the shared ``create_vector_store`` factory."""
     embeddings = VLLMEmbeddings(embeddings_cfg)
-    vector_store = create_neo4j_vector_store(vector_store_cfg, embeddings)
+    vector_store = create_vector_store(vector_store_cfg, embeddings)
     return embeddings, vector_store
 
 
@@ -120,7 +115,7 @@ class RAGIngestTool(ToolRunner):
             ]
 
             embeddings_cfg, vector_store_cfg, _llm_cfg = _parse_rag_configs(params)
-            embeddings, vector_store = await _build_neo4j_vector_store(
+            embeddings, vector_store = await _build_rag_stack(
                 embeddings_cfg, vector_store_cfg
             )
 
@@ -138,7 +133,7 @@ class RAGIngestTool(ToolRunner):
                 },
                 metrics={"duration_s": time.time() - start},
             )
-        except NotImplementedError as e:
+        except (NotImplementedError, ValueError) as e:
             return ExecutionResult(
                 success=False,
                 error=str(e),
@@ -205,7 +200,7 @@ class RAGRetrieveTool(ToolRunner):
             filters = _json_loads_maybe(params.get("filters"), None)
 
             embeddings_cfg, vector_store_cfg, _llm_cfg = _parse_rag_configs(params)
-            embeddings, vector_store = await _build_neo4j_vector_store(
+            embeddings, vector_store = await _build_rag_stack(
                 embeddings_cfg, vector_store_cfg
             )
 
@@ -237,7 +232,7 @@ class RAGRetrieveTool(ToolRunner):
                 },
                 metrics={"duration_s": time.time() - start},
             )
-        except NotImplementedError as e:
+        except (NotImplementedError, ValueError) as e:
             return ExecutionResult(
                 success=False,
                 error=str(e),

@@ -63,7 +63,7 @@ class InitializeRAG(BaseNode[RAGState, None, str]):
             rag_cfg = getattr(cfg, "rag", {})
 
             # Create RAG configuration from Hydra config
-            rag_config = self._create_rag_config(rag_cfg)
+            rag_config = self._create_rag_config(rag_cfg, cfg)
             ctx.state.rag_config = rag_config
 
             ctx.state.processing_steps.append("rag_initialized")
@@ -77,7 +77,9 @@ class InitializeRAG(BaseNode[RAGState, None, str]):
             ctx.state.execution_status = ExecutionStatus.FAILED
             return RAGError()
 
-    def _create_rag_config(self, rag_cfg: dict[str, Any]) -> RAGConfig:
+    def _create_rag_config(
+        self, rag_cfg: dict[str, Any], root_cfg: Any | None = None
+    ) -> RAGConfig:
         """Create RAG configuration from Hydra config."""
         from DeepResearch.src.datatypes.rag import (
             EmbeddingModelType,
@@ -87,29 +89,49 @@ class InitializeRAG(BaseNode[RAGState, None, str]):
             VectorStoreType,
             VLLMConfig,
         )
+        from DeepResearch.src.utils.model_registry import (
+            resolve_embeddings_config,
+            resolve_vllm_config,
+        )
 
         # Create embeddings config
-        embeddings_cfg = rag_cfg.get("embeddings", {})
-        embeddings_config = EmbeddingsConfig(
-            model_type=EmbeddingModelType(embeddings_cfg.get("model_type", "openai")),
-            model_name=embeddings_cfg.get("model_name", "text-embedding-3-small"),
-            api_key=embeddings_cfg.get("api_key"),
-            base_url=embeddings_cfg.get("base_url"),
-            num_dimensions=embeddings_cfg.get("num_dimensions", 1536),
-            batch_size=embeddings_cfg.get("batch_size", 32),
-        )
+        embeddings_role = rag_cfg.get("embedding_model_role")
+        if embeddings_role:
+            embeddings_config = resolve_embeddings_config(
+                root_cfg, str(embeddings_role)
+            )
+        else:
+            embeddings_cfg = rag_cfg.get("embeddings", {})
+            embeddings_config = EmbeddingsConfig(
+                model_type=EmbeddingModelType(
+                    embeddings_cfg.get("model_type", "sentence_transformers")
+                ),
+                model_name=embeddings_cfg.get("model_name", "all-MiniLM-L6-v2"),
+                api_key=embeddings_cfg.get("api_key"),
+                base_url=embeddings_cfg.get("base_url"),
+                num_dimensions=embeddings_cfg.get("num_dimensions", 384),
+                batch_size=embeddings_cfg.get("batch_size", 32),
+                query_instruction=embeddings_cfg.get("query_instruction"),
+                device=embeddings_cfg.get("device"),
+            )
 
         # Create LLM config
-        llm_cfg = rag_cfg.get("llm", {})
-        llm_config = VLLMConfig(
-            model_type=LLMModelType(llm_cfg.get("model_type", "huggingface")),
-            model_name=llm_cfg.get("model_name", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"),
-            host=llm_cfg.get("host", "localhost"),
-            port=llm_cfg.get("port", 8000),
-            api_key=llm_cfg.get("api_key"),
-            max_tokens=llm_cfg.get("max_tokens", 2048),
-            temperature=llm_cfg.get("temperature", 0.7),
-        )
+        llm_role = rag_cfg.get("llm_model_role")
+        if llm_role:
+            llm_config = resolve_vllm_config(root_cfg, str(llm_role))
+        else:
+            llm_cfg = rag_cfg.get("llm", {})
+            llm_config = VLLMConfig(
+                model_type=LLMModelType(llm_cfg.get("model_type", "huggingface")),
+                model_name=llm_cfg.get(
+                    "model_name", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+                ),
+                host=llm_cfg.get("host", "localhost"),
+                port=llm_cfg.get("port", 8000),
+                api_key=llm_cfg.get("api_key"),
+                max_tokens=llm_cfg.get("max_tokens", 2048),
+                temperature=llm_cfg.get("temperature", 0.7),
+            )
 
         # Create vector store config
         vs_cfg = rag_cfg.get("vector_store", {})
@@ -297,17 +319,29 @@ class StoreDocuments(BaseNode[RAGState, None, str]):
         """Store documents in vector store."""
         try:
             rag_config = ctx.state.rag_config
-            if rag_config is None:
-                raise RuntimeError("RAG config not initialized")
-            if rag_config is None:
-                msg = "RAG config not initialized"
-                raise RuntimeError(msg)
+
+            # Initialize Embeddings via Factory
+            from DeepResearch.src.datatypes.embeddings_factory import create_embeddings
+
+            embeddings = create_embeddings(rag_config.embeddings)
+
+            # Initialize Vector Store via Factory
+            from DeepResearch.src.vector_stores import create_vector_store
+
+            vector_store = create_vector_store(rag_config.vector_store, embeddings)
 
             # Initialize embeddings + LLM providers
             embeddings = self._create_embeddings_provider(rag_config)
             llm = self._create_llm_provider(rag_config)
 
-            vector_store = create_vector_store(rag_config.vector_store, embeddings)
+            # Store documents
+            if ctx.state.documents and vector_store:
+                document_ids = await vector_store.add_documents(ctx.state.documents)
+                ctx.state.processing_steps.append(
+                    f"stored_{len(document_ids)}_documents"
+                )
+
+            ctx.state.processing_steps.append("embeddings_initialized")
 
             # Store documents (best effort). If embeddings/LLM aren't available,
             # we still keep the workflow runnable and report degraded state.
@@ -394,6 +428,18 @@ class QueryRAG(BaseNode[RAGState, None, str]):
     async def run(self, ctx: GraphRunContext[RAGState]) -> GenerateResponse | RAGError:
         """Execute RAG query using RAGAgent."""
         try:
+            # Import here to avoid circular import
+            from omegaconf import DictConfig, OmegaConf
+
+            from DeepResearch.src.agents import RAGAgent
+
+            # Create RAGAgent with config from state or empty config
+            cfg = (
+                ctx.state.config if ctx.state.config is not None else OmegaConf.create()
+            )
+            rag_agent = RAGAgent(cfg)
+            # await rag_agent.initialize()  # Method doesn't exist
+
             # Create RAG query
             rag_query = RAGQuery(
                 text=ctx.state.question, search_type=SearchType.SIMILARITY, top_k=5
@@ -407,31 +453,7 @@ class QueryRAG(BaseNode[RAGState, None, str]):
 
             # Execute query
             start_time = time.time()
-            # Build context and call LLM via RAGSystem.query logic
-            search_results = await vector_store.search(
-                query=rag_query.text,
-                search_type=rag_query.search_type,
-                retrieval_query=rag_query.retrieval_query,
-                top_k=rag_query.top_k,
-                score_threshold=rag_query.score_threshold,
-                filters=rag_query.filters,
-            )
-            context_parts = [
-                f"Document {r.rank}: {r.document.content}" for r in search_results
-            ]
-            context = "\n\n".join(context_parts)
-            from DeepResearch.src.prompts.rag import RAGPrompts
-
-            prompt = RAGPrompts.get_rag_query_prompt(rag_query.text, context)
-            generated_answer = await llm.generate(prompt, context=context)
-            processing_time = time.time() - start_time
-            rag_response = RAGResponse(
-                query=rag_query.text,
-                retrieved_documents=search_results,
-                generated_answer=generated_answer,
-                context=context,
-                processing_time=processing_time,
-            )
+            rag_response = await rag_agent.execute_rag_query(rag_query)
             processing_time = time.time() - start_time
 
             if rag_response:

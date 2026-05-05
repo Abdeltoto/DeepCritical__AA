@@ -516,19 +516,22 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
 def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     """Decorator to mark a function as agent middleware."""
-    cast("Any", func)._middleware_type = MiddlewareType.AGENT
+    # Add marker attribute to identify this as agent middleware
+    func._middleware_type = MiddlewareType.AGENT  # type: ignore
     return func
 
 
 def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareCallable:
     """Decorator to mark a function as function middleware."""
-    cast("Any", func)._middleware_type = MiddlewareType.FUNCTION
+    # Add marker attribute to identify this as function middleware
+    func._middleware_type = MiddlewareType.FUNCTION  # type: ignore
     return func
 
 
 def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
     """Decorator to mark a function as chat middleware."""
-    cast("Any", func)._middleware_type = MiddlewareType.CHAT
+    # Add marker attribute to identify this as chat middleware
+    func._middleware_type = MiddlewareType.CHAT  # type: ignore
     return func
 
 
@@ -586,7 +589,13 @@ def create_function_middleware_pipeline(
 
 # Decorator for adding middleware support to agent classes
 def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
-    """Class decorator that adds middleware support to an agent class."""
+    """Class decorator that adds middleware support to an agent class.
+
+    This is **opt-in**: apply ``@use_agent_middleware`` to your pydantic-ai
+    ``Agent`` subclass (or wrapper) when you want ``run`` / ``run_stream`` to
+    honor ``AgentMiddlewarePipeline``. Core ``DeepResearch.agents.BaseAgent`` does
+    not use this decorator by default.
+    """
     ac = cast("Any", agent_class)
     # Store original methods
     original_run = ac.run
@@ -639,7 +648,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
                 _execute_handler,
             )
 
-            return result if result else None
+            return result
 
         # No middleware, execute directly
         return await original_run(self, normalized_messages, thread=thread, **kwargs)

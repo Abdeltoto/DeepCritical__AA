@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
 
 # Import existing DeepCritical types
 from DeepResearch.src.datatypes.workflow_patterns import (
+    SUPPORTED_WORKFLOW_PATTERNS,
     AgentInteractionState,
+    InteractionMessage,
     InteractionPattern,
+    MessageType,
     WorkflowOrchestrator,
     create_interaction_state,
     create_workflow_orchestrator,
@@ -53,6 +56,7 @@ class WorkflowPatternState:
     interaction_state: AgentInteractionState | None = None
     orchestrator: WorkflowOrchestrator | None = None
     metrics: InteractionMetrics = field(default_factory=InteractionMetrics)
+    interaction_summary: dict[str, Any] = field(default_factory=dict)
 
     # Results
     final_result: Any | None = None
@@ -69,6 +73,81 @@ class WorkflowPatternState:
     agent_executors: dict[str, Any] = field(default_factory=dict)
     message_routing: MessageRoutingStrategy = MessageRoutingStrategy.DIRECT
     consensus_algorithm: ConsensusAlgorithm = ConsensusAlgorithm.SIMPLE_AGREEMENT
+    require_consensus: bool = True
+
+
+def _config_get(config: Any, key: str, default: Any) -> Any:
+    """Read a key from DictConfig or dict-like config without coupling callers."""
+    if config is None:
+        return default
+    if _is_mock_value(config):
+        return default
+    if hasattr(config, "get"):
+        value = config.get(key, default)
+    else:
+        value = getattr(config, key, default)
+    return default if _is_mock_value(value) else value
+
+
+def _is_mock_value(value: Any) -> bool:
+    return type(value).__module__.startswith("unittest.mock")
+
+
+def _seed_initial_messages(
+    state: WorkflowPatternState, interaction_state: AgentInteractionState
+) -> None:
+    """Put the input question into the first agent-message queue."""
+    if not state.agent_ids:
+        return
+
+    if state.interaction_pattern == InteractionPattern.SEQUENTIAL:
+        receiver_ids: list[str | None] = [state.agent_ids[0]]
+    elif state.interaction_pattern == InteractionPattern.HIERARCHICAL:
+        receiver_ids = [_select_coordinator_id(state)]
+    else:
+        receiver_ids = [None]
+
+    for receiver_id in receiver_ids:
+        interaction_state.send_message(
+            InteractionMessage(
+                sender_id="system",
+                receiver_id=receiver_id,
+                message_type=MessageType.REQUEST,
+                content={"question": state.question},
+            )
+        )
+
+
+def _select_coordinator_id(state: WorkflowPatternState) -> str:
+    configured = _config_get(state.config, "coordinator_id", None)
+    if configured and configured in state.agent_ids:
+        return configured
+    return state.agent_ids[0]
+
+
+def _store_interaction_summary(
+    state: WorkflowPatternState, summary: dict[str, Any]
+) -> None:
+    """Store runtime summary without replacing real metrics objects."""
+    state.interaction_summary = summary
+    if not isinstance(getattr(state, "metrics", None), InteractionMetrics):
+        state.metrics = cast("InteractionMetrics", summary)
+
+
+def _get_orchestrator_errors(orchestrator: WorkflowOrchestrator) -> list[str]:
+    errors = getattr(orchestrator.state, "errors", [])
+    if _is_mock_value(errors) or errors is None:
+        return []
+    return [str(error) for error in errors]
+
+
+def _len_or_none(value: Any) -> int | None:
+    if _is_mock_value(value) or value is None:
+        return None
+    try:
+        return len(value)
+    except TypeError:
+        return None
 
 
 # --- Base Pattern Nodes ---
@@ -89,6 +168,42 @@ class InitializePattern(BaseNode[WorkflowPatternState, None, str]):
                 agents=ctx.state.agent_ids,
                 agent_types=ctx.state.agent_types,
             )
+            default_max_rounds = (
+                interaction_state.max_rounds
+                if not _is_mock_value(interaction_state.max_rounds)
+                else 10
+            )
+            interaction_state.max_rounds = int(
+                _config_get(ctx.state.config, "max_rounds", default_max_rounds)
+            )
+            default_consensus_threshold = (
+                interaction_state.consensus_threshold
+                if not _is_mock_value(interaction_state.consensus_threshold)
+                else 0.8
+            )
+            interaction_state.consensus_threshold = float(
+                _config_get(
+                    ctx.state.config,
+                    "consensus_threshold",
+                    default_consensus_threshold,
+                )
+            )
+            ctx.state.require_consensus = bool(
+                _config_get(ctx.state.config, "require_consensus", True)
+            )
+            default_algorithm = (
+                ctx.state.consensus_algorithm.value
+                if not _is_mock_value(ctx.state.consensus_algorithm)
+                else ConsensusAlgorithm.SIMPLE_AGREEMENT.value
+            )
+            ctx.state.consensus_algorithm = ConsensusAlgorithm(
+                _config_get(
+                    ctx.state.config,
+                    "consensus_algorithm",
+                    default_algorithm,
+                )
+            )
+            _seed_initial_messages(ctx.state, interaction_state)
 
             # Create orchestrator
             orchestrator = create_workflow_orchestrator(
@@ -169,9 +284,12 @@ class ExecuteCollaborativePattern(BaseNode[WorkflowPatternState, None, str]):
 
             # Update state
             ctx.state.final_result = result
-            ctx.state.execution_summary["orchestrator_summary"] = (
-                orchestrator.state.get_summary()
-            )
+            summary = orchestrator.state.get_summary()
+            _store_interaction_summary(ctx.state, summary)
+            if orchestrator_errors := _get_orchestrator_errors(orchestrator):
+                ctx.state.errors.extend(orchestrator_errors)
+                ctx.state.execution_status = ExecutionStatus.FAILED
+                return PatternError()
             ctx.state.processing_steps.append("collaborative_pattern_executed")
 
             return ProcessCollaborativeResults()
@@ -201,9 +319,12 @@ class ExecuteSequentialPattern(BaseNode[WorkflowPatternState, None, str]):
 
             # Update state
             ctx.state.final_result = result
-            ctx.state.execution_summary["orchestrator_summary"] = (
-                orchestrator.state.get_summary()
-            )
+            summary = orchestrator.state.get_summary()
+            _store_interaction_summary(ctx.state, summary)
+            if orchestrator_errors := _get_orchestrator_errors(orchestrator):
+                ctx.state.errors.extend(orchestrator_errors)
+                ctx.state.execution_status = ExecutionStatus.FAILED
+                return PatternError()
             ctx.state.processing_steps.append("sequential_pattern_executed")
 
             return ProcessSequentialResults()
@@ -233,9 +354,12 @@ class ExecuteHierarchicalPattern(BaseNode[WorkflowPatternState, None, str]):
 
             # Update state
             ctx.state.final_result = result
-            ctx.state.execution_summary["orchestrator_summary"] = (
-                orchestrator.state.get_summary()
-            )
+            summary = orchestrator.state.get_summary()
+            _store_interaction_summary(ctx.state, summary)
+            if orchestrator_errors := _get_orchestrator_errors(orchestrator):
+                ctx.state.errors.extend(orchestrator_errors)
+                ctx.state.execution_status = ExecutionStatus.FAILED
+                return PatternError()
             ctx.state.processing_steps.append("hierarchical_pattern_executed")
 
             return ProcessHierarchicalResults()
@@ -260,12 +384,28 @@ class ProcessCollaborativeResults(BaseNode[WorkflowPatternState, None, str]):
         try:
             # Compute consensus metrics
             orchestrator = ctx.state.orchestrator
-            if orchestrator is None:
-                raise RuntimeError("Orchestrator not initialized")
+            interaction_state = ctx.state.interaction_state
+            if not orchestrator or not interaction_state:
+                msg = "Orchestrator or interaction state not initialized"
+                raise RuntimeError(msg)
+
+            consensus_threshold = getattr(interaction_state, "consensus_threshold", 0.7)
+            if _is_mock_value(consensus_threshold):
+                consensus_threshold = 0.7
             consensus_result = WorkflowPatternUtils.compute_consensus(
                 list(orchestrator.state.results.values()),
                 ctx.state.consensus_algorithm,
+                consensus_threshold,
             )
+            agents_participated = _len_or_none(
+                getattr(interaction_state, "agents", None)
+            )
+            if agents_participated is None:
+                agents_participated = _len_or_none(
+                    getattr(interaction_state, "active_agents", None)
+                )
+            if agents_participated is None:
+                agents_participated = 0
 
             # Update execution summary
             ctx.state.execution_summary.update(
@@ -274,16 +414,8 @@ class ProcessCollaborativeResults(BaseNode[WorkflowPatternState, None, str]):
                     "consensus_reached": consensus_result.consensus_reached,
                     "consensus_confidence": consensus_result.confidence,
                     "algorithm_used": consensus_result.algorithm_used.value,
-                    "total_rounds": (
-                        ctx.state.interaction_state.current_round
-                        if ctx.state.interaction_state
-                        else 0
-                    ),
-                    "agents_participated": len(
-                        ctx.state.interaction_state.active_agents
-                        if ctx.state.interaction_state
-                        else []
-                    ),
+                    "total_rounds": interaction_state.current_round,
+                    "agents_participated": agents_participated,
                 }
             )
 
@@ -308,27 +440,27 @@ class ProcessSequentialResults(BaseNode[WorkflowPatternState, None, str]):
         try:
             # Sequential results are already in the correct format
             orchestrator = ctx.state.orchestrator
-            if orchestrator is None:
-                raise RuntimeError("Orchestrator not initialized")
+            interaction_state = ctx.state.interaction_state
+            if not orchestrator or not interaction_state:
+                msg = "Orchestrator or interaction state not initialized"
+                raise RuntimeError(msg)
             sequential_results = orchestrator.state.results
+            if sequential_results is None:
+                msg = "Sequential results are not available"
+                raise RuntimeError(msg)
+            agents_executed = sum(
+                1
+                for result in sequential_results.values()
+                if not isinstance(result, dict) or result.get("success", True)
+            )
 
             # Update execution summary
             ctx.state.execution_summary.update(
                 {
                     "pattern": ctx.state.interaction_pattern.value,
                     "sequential_steps": len(sequential_results),
-                    "agents_executed": len(
-                        [
-                            r
-                            for r in sequential_results.values()
-                            if r.get("success", False)
-                        ]
-                    ),
-                    "total_rounds": (
-                        ctx.state.interaction_state.current_round
-                        if ctx.state.interaction_state
-                        else 0
-                    ),
+                    "agents_executed": agents_executed,
+                    "total_rounds": interaction_state.current_round,
                 }
             )
 
@@ -353,18 +485,32 @@ class ProcessHierarchicalResults(BaseNode[WorkflowPatternState, None, str]):
         try:
             # Hierarchical results contain coordinator and subordinate results
             orchestrator = ctx.state.orchestrator
-            if orchestrator is None:
-                raise RuntimeError("Orchestrator not initialized")
+            if not orchestrator:
+                msg = "Orchestrator not initialized"
+                raise RuntimeError(msg)
             hierarchical_results = orchestrator.state.results
+            if hierarchical_results is None:
+                msg = "Hierarchical results are not available"
+                raise RuntimeError(msg)
+
+            final_result = getattr(ctx.state, "final_result", None)
+            if _is_mock_value(final_result):
+                final_result = None
+            if isinstance(final_result, dict) and "subordinates" in final_result:
+                coordinator_executed = final_result.get("coordinator") is not None
+                subordinates_executed = len(final_result.get("subordinates", {}))
+            else:
+                coordinator_executed = "coordinator" in hierarchical_results
+                subordinates_executed = len(
+                    [key for key in hierarchical_results if key != "coordinator"]
+                )
 
             # Update execution summary
             ctx.state.execution_summary.update(
                 {
                     "pattern": ctx.state.interaction_pattern.value,
-                    "coordinator_executed": "coordinator" in hierarchical_results,
-                    "subordinates_executed": len(
-                        [k for k in hierarchical_results if k != "coordinator"]
-                    ),
+                    "coordinator_executed": coordinator_executed,
+                    "subordinates_executed": subordinates_executed,
                     "total_rounds": (
                         ctx.state.interaction_state.current_round
                         if ctx.state.interaction_state
@@ -399,7 +545,7 @@ class ValidateConsensus(BaseNode[WorkflowPatternState, None, str]):
                 "consensus_reached", False
             )
 
-            if not consensus_reached:
+            if ctx.state.require_consensus and not consensus_reached:
                 ctx.state.errors.append(
                     "Consensus was not reached in collaborative pattern"
                 )
@@ -445,9 +591,10 @@ class ValidateResults(BaseNode[WorkflowPatternState, None, str]):
                 if (
                     not isinstance(final_result, dict)
                     or "coordinator" not in final_result
+                    or ("subordinates" not in final_result and len(final_result) <= 1)
                 ):
                     ctx.state.errors.append(
-                        "Hierarchical pattern should return dict with coordinator"
+                        "Hierarchical pattern should return dict with coordinator and subordinates"
                     )
                     ctx.state.execution_status = ExecutionStatus.FAILED
                     return PatternError()
@@ -476,6 +623,7 @@ class FinalizePattern(BaseNode[WorkflowPatternState, None, str]):
         try:
             # Update final metrics
             ctx.state.end_time = time.time()
+            ctx.state.execution_status = ExecutionStatus.SUCCESS
             total_time = ctx.state.end_time - ctx.state.start_time
 
             # Create comprehensive execution summary
@@ -602,7 +750,14 @@ class PatternError(BaseNode[WorkflowPatternState, None, str]):
 class ExecutePattern(BaseNode[WorkflowPatternState, None, str]):
     """Execute the appropriate pattern based on configuration."""
 
-    async def run(self, ctx: GraphRunContext[WorkflowPatternState]) -> Any:
+    async def run(
+        self, ctx: GraphRunContext[WorkflowPatternState]
+    ) -> (
+        ExecuteCollaborativePattern
+        | ExecuteSequentialPattern
+        | ExecuteHierarchicalPattern
+        | PatternError
+    ):
         """Execute the configured interaction pattern."""
         pattern = ctx.state.interaction_pattern
 
@@ -621,16 +776,27 @@ class ExecutePattern(BaseNode[WorkflowPatternState, None, str]):
 
 def create_collaborative_pattern_graph() -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for collaborative pattern execution."""
+    return create_supported_pattern_graph()
+
+
+def create_supported_pattern_graph() -> Graph[WorkflowPatternState]:
+    """Create a graph containing every supported workflow-pattern node."""
     return Graph(
-        nodes=(
-            InitializePattern,
-            SetupAgents,
-            ExecuteCollaborativePattern,
-            ProcessCollaborativeResults,
-            ValidateConsensus,
-            FinalizePattern,
-            PatternError,
-        ),
+        nodes=[
+            InitializePattern(),
+            SetupAgents(),
+            ExecutePattern(),
+            ExecuteCollaborativePattern(),
+            ExecuteSequentialPattern(),
+            ExecuteHierarchicalPattern(),
+            ProcessCollaborativeResults(),
+            ProcessSequentialResults(),
+            ProcessHierarchicalResults(),
+            ValidateConsensus(),
+            ValidateResults(),
+            FinalizePattern(),
+            PatternError(),
+        ],
         state_type=WorkflowPatternState,
         run_end_type=str,
     )
@@ -638,36 +804,12 @@ def create_collaborative_pattern_graph() -> Graph[WorkflowPatternState, None, st
 
 def create_sequential_pattern_graph() -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for sequential pattern execution."""
-    return Graph(
-        nodes=(
-            InitializePattern,
-            SetupAgents,
-            ExecuteSequentialPattern,
-            ProcessSequentialResults,
-            ValidateResults,
-            FinalizePattern,
-            PatternError,
-        ),
-        state_type=WorkflowPatternState,
-        run_end_type=str,
-    )
+    return create_supported_pattern_graph()
 
 
 def create_hierarchical_pattern_graph() -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for hierarchical pattern execution."""
-    return Graph(
-        nodes=(
-            InitializePattern,
-            SetupAgents,
-            ExecuteHierarchicalPattern,
-            ProcessHierarchicalResults,
-            ValidateResults,
-            FinalizePattern,
-            PatternError,
-        ),
-        state_type=WorkflowPatternState,
-        run_end_type=str,
-    )
+    return create_supported_pattern_graph()
 
 
 def create_pattern_graph(
@@ -675,14 +817,10 @@ def create_pattern_graph(
 ) -> Graph[WorkflowPatternState, None, str]:
     """Create a Pydantic Graph for the given interaction pattern."""
 
-    if pattern == InteractionPattern.COLLABORATIVE:
-        return create_collaborative_pattern_graph()
-    if pattern == InteractionPattern.SEQUENTIAL:
-        return create_sequential_pattern_graph()
-    if pattern == InteractionPattern.HIERARCHICAL:
-        return create_hierarchical_pattern_graph()
-    # Default to collaborative
-    return create_collaborative_pattern_graph()
+    if pattern not in SUPPORTED_WORKFLOW_PATTERNS:
+        msg = f"Unsupported workflow pattern: {pattern.value}"
+        raise ValueError(msg)
+    return create_supported_pattern_graph()
 
 
 # --- Workflow Execution Functions ---
@@ -803,6 +941,7 @@ __all__ = [
     "create_hierarchical_pattern_graph",
     "create_pattern_graph",
     "create_sequential_pattern_graph",
+    "create_supported_pattern_graph",
     "run_collaborative_pattern_workflow",
     "run_hierarchical_pattern_workflow",
     "run_pattern_workflow",

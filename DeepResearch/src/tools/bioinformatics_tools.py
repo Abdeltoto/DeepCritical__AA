@@ -40,6 +40,8 @@ from DeepResearch.src.statemachines.bioinformatics_workflow import (
     run_bioinformatics_workflow,
 )
 
+from ..utils.model_registry import resolve_model_name
+
 # Note: defer decorator is not available in current pydantic-ai version
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
 
@@ -54,7 +56,11 @@ class BioinformaticsToolDeps(BaseModel):
 
     config: dict[str, Any] = Field(default_factory=dict)
     model_name: str = Field(
-        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use for AI agents"
+        DEFAULT_PYDANTIC_AI_MODEL, description="Model to use for AI agents"
+    )
+    model_role: str = Field(
+        "bioinformatics_reasoning",
+        description="Model-registry role used when model_name is not explicit",
     )
     quality_threshold: float = Field(
         0.8, ge=0.0, le=1.0, description="Quality threshold for data fusion"
@@ -66,13 +72,21 @@ class BioinformaticsToolDeps(BaseModel):
         bioinformatics_config = config.get("bioinformatics", {})
         model_config = bioinformatics_config.get("model", {})
         quality_config = bioinformatics_config.get("quality", {})
-
-        return cls(
-            config=config,
-            model_name=model_config.get("default", DEFAULT_PYDANTIC_AI_MODEL),
-            quality_threshold=quality_config.get("default_threshold", 0.8),
-            **kwargs,
+        model_role = model_config.get("role", "bioinformatics_reasoning")
+        configured_model = (
+            resolve_model_name(config, model_role)
+            if model_config.get("role")
+            else model_config.get("default") or resolve_model_name(config, model_role)
         )
+
+        values = {
+            "config": config,
+            "model_name": configured_model,
+            "model_role": model_role,
+            "quality_threshold": quality_config.get("default_threshold", 0.8),
+        }
+        values.update(kwargs)
+        return cls(**values)
 
 
 # Tool definitions for bioinformatics data processing

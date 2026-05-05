@@ -284,15 +284,12 @@ def edit_file_tool(
         )
 
 
-def task_tool(
+async def task_tool(
     request: TaskRequestModel, ctx: RunContext[DeepAgentState]
 ) -> TaskResponse:
-    """Tool for executing tasks with subagents."""
+    """Run a task on a subagent registered under ``state.shared_state['subagent_registry']``."""
+    task_id = str(uuid.uuid4())
     try:
-        # Generate task ID
-        task_id = str(uuid.uuid4())
-
-        # Create task request
         TaskRequest(
             task_id=task_id,
             description=request.description,
@@ -300,7 +297,6 @@ def task_tool(
             parameters=request.parameters,
         )
 
-        # Add to active tasks
         if hasattr(ctx, "state") and hasattr(ctx.state, "active_tasks"):
             active_tasks = getattr(ctx.state, "active_tasks", None)
             if active_tasks is not None and hasattr(active_tasks, "append"):
@@ -308,17 +304,40 @@ def task_tool(
                 if append_method is not None and callable(append_method):
                     append_method(task_id)
 
-        # TODO: Implement actual subagent execution
-        # For now, return a placeholder response
-        result = {
-            "task_id": task_id,
-            "description": request.description,
-            "subagent_type": request.subagent_type,
-            "status": "executed",
-            "message": f"Task executed by {request.subagent_type} subagent",
-        }
+        registry = (
+            ctx.state.shared_state.get("subagent_registry")
+            if hasattr(ctx, "state")
+            else None
+        )
+        if not isinstance(registry, dict):
+            registry = {}
 
-        # Move from active to completed
+        sub = registry.get(request.subagent_type)
+        if sub is None:
+            return TaskResponse(
+                success=False,
+                task_id=task_id,
+                result=None,
+                message=(
+                    f"No subagent {request.subagent_type!r} in subagent_registry. "
+                    "Initialize SubAgentMiddleware so subagents are registered."
+                ),
+            )
+
+        run_out = await sub.run(request.description)
+        payload = getattr(run_out, "output", run_out)
+        result: dict[str, Any] = (
+            dict(payload) if isinstance(payload, dict) else {"output": payload}
+        )
+        result.update(
+            {
+                "task_id": task_id,
+                "description": request.description,
+                "subagent_type": request.subagent_type,
+                "status": "completed",
+            }
+        )
+
         if (
             hasattr(ctx, "state")
             and hasattr(ctx.state, "active_tasks")
@@ -351,7 +370,7 @@ def task_tool(
     except Exception as e:
         return TaskResponse(
             success=False,
-            task_id="",
+            task_id=task_id,
             result=None,
             message=f"Error executing task: {e!s}",
         )

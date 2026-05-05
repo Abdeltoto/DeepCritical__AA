@@ -46,7 +46,7 @@ class DataFusionAgent:
         agents_config = bioinformatics_config.get("agents", {})
         data_fusion_config = agents_config.get("data_fusion", {})
 
-        resolved_model = data_fusion_config.get("model", self.model_name)
+        model = data_fusion_config.get("model", self.model_name)
 
         # Get system prompt from config or use default
         system_prompt = data_fusion_config.get(
@@ -54,14 +54,11 @@ class DataFusionAgent:
             BioinformaticsAgentPrompts.DATA_FUSION_SYSTEM,
         )
 
-        return cast(
-            "Agent[BioinformaticsAgentDeps, DataFusionResult]",
-            Agent(
-                model=resolved_model,
-                deps_type=BioinformaticsAgentDeps,
-                output_type=DataFusionResult,
-                system_prompt=system_prompt,
-            ),
+        return Agent[BioinformaticsAgentDeps, DataFusionResult](
+            model=model,
+            deps_type=BioinformaticsAgentDeps,
+            output_type=DataFusionResult,
+            system_prompt=system_prompt,
         )
 
     async def fuse_data(
@@ -78,7 +75,10 @@ class DataFusionAgent:
         )
 
         result = await self.agent.run(fusion_prompt, deps=deps)
-        return result.output
+        if not hasattr(result, "data"):
+            msg = "RunResult missing data attribute"
+            raise AttributeError(msg)
+        return cast("DataFusionResult", result.data)
 
 
 class GOAnnotationAgent:
@@ -92,14 +92,12 @@ class GOAnnotationAgent:
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, list[GOAnnotation]]:
         """Create the GO annotation agent."""
-        return cast(
-            "Agent[BioinformaticsAgentDeps, list[GOAnnotation]]",
-            Agent(
-                model=self.model_name,
-                deps_type=BioinformaticsAgentDeps,
-                output_type=list[GOAnnotation],
-                system_prompt=BioinformaticsAgentPrompts.GO_ANNOTATION_SYSTEM,
-            ),
+
+        return Agent[BioinformaticsAgentDeps, list[GOAnnotation]](
+            model=self.model_name,
+            deps_type=BioinformaticsAgentDeps,
+            output_type=list[GOAnnotation],
+            system_prompt=BioinformaticsAgentPrompts.GO_ANNOTATION_SYSTEM,
         )
 
     async def process_annotations(
@@ -118,7 +116,10 @@ class GOAnnotationAgent:
         )
 
         result = await self.agent.run(processing_prompt, deps=deps)
-        return result.output
+        if not hasattr(result, "data"):
+            msg = "RunResult missing data attribute"
+            raise AttributeError(msg)
+        return cast("list[GOAnnotation]", result.data)
 
 
 class ReasoningAgent:
@@ -132,14 +133,12 @@ class ReasoningAgent:
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, ReasoningResult]:
         """Create the reasoning agent."""
-        return cast(
-            "Agent[BioinformaticsAgentDeps, ReasoningResult]",
-            Agent(
-                model=self.model_name,
-                deps_type=BioinformaticsAgentDeps,
-                output_type=ReasoningResult,
-                system_prompt=BioinformaticsAgentPrompts.REASONING_SYSTEM,
-            ),
+
+        return Agent[BioinformaticsAgentDeps, ReasoningResult](
+            model=self.model_name,
+            deps_type=BioinformaticsAgentDeps,
+            output_type=ReasoningResult,
+            system_prompt=BioinformaticsAgentPrompts.REASONING_SYSTEM,
         )
 
     async def perform_reasoning(
@@ -163,7 +162,10 @@ class ReasoningAgent:
         )
 
         result = await self.agent.run(reasoning_prompt, deps=deps)
-        return result.output
+        if not hasattr(result, "data"):
+            msg = "RunResult missing data attribute"
+            raise AttributeError(msg)
+        return cast("ReasoningResult", result.data)
 
 
 class DataQualityAgent:
@@ -177,14 +179,12 @@ class DataQualityAgent:
 
     def _create_agent(self) -> Agent[BioinformaticsAgentDeps, dict[str, float]]:
         """Create the data quality agent."""
-        return cast(
-            "Agent[BioinformaticsAgentDeps, dict[str, float]]",
-            Agent(
-                model=self.model_name,
-                deps_type=BioinformaticsAgentDeps,
-                output_type=dict[str, float],
-                system_prompt=BioinformaticsAgentPrompts.DATA_QUALITY_SYSTEM,
-            ),
+
+        return Agent[BioinformaticsAgentDeps, dict[str, float]](
+            model=self.model_name,
+            deps_type=BioinformaticsAgentDeps,
+            output_type=dict[str, float],
+            system_prompt=BioinformaticsAgentPrompts.DATA_QUALITY_SYSTEM,
         )
 
     async def assess_quality(
@@ -206,7 +206,10 @@ class DataQualityAgent:
         )
 
         result = await self.agent.run(quality_prompt, deps=deps)
-        return result.output
+        if not hasattr(result, "data"):
+            msg = "RunResult missing data attribute"
+            raise AttributeError(msg)
+        return cast("dict[str, float]", result.data)
 
 
 class BioinformaticsAgent:
@@ -267,7 +270,9 @@ class AgentOrchestrator:
 
         # Step 2: Construct dataset from fusion result
         if fusion_result.fused_dataset is None:
-            raise ValueError("Data fusion did not produce a fused dataset")
+            msg = "Fused dataset is None"
+            raise ValueError(msg)
+
         dataset = fusion_result.fused_dataset
 
         # Step 3: Assess data quality

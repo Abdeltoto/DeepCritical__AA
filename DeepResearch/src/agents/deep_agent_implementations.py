@@ -8,9 +8,10 @@ Pydantic AI that align with DeepCritical's architecture.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -32,14 +33,13 @@ from DeepResearch.src.tools.deep_agent_tools import (
     write_file_tool,
     write_todos_tool,
 )
-from DeepResearch.src.tools.registry import canonical_registry
 
 
 class AgentConfig(BaseModel):
     """Configuration for agent instances."""
 
     name: str = Field(..., description="Agent name")
-    model_name: str = Field(default=DEFAULT_PYDANTIC_AI_MODEL, description="Model name")
+    model_name: Any = Field(DEFAULT_PYDANTIC_AI_MODEL, description="Model name")
     system_prompt: str = Field("", description="System prompt")
     tools: list[str] = Field(default_factory=list, description="Tool names")
     capabilities: list[AgentCapability] = Field(
@@ -84,10 +84,7 @@ class BaseDeepAgent:
 
     def __init__(self, config: AgentConfig):
         self.config = config
-        # `deps_type=DeepAgentState` so the agent expects `deps: DeepAgentState`.
         self.agent: Agent[DeepAgentState, str] | None = None
-        # Middleware integration is currently disabled (see `_initialize_middleware`)
-        # because the middleware pipeline expects a `RunContext[DeepAgentState]`.
         self.middleware_pipeline: MiddlewarePipeline | None = None
         self.metrics = AgentMetrics(agent_name=config.name)
         self._initialize_agent()
@@ -98,7 +95,7 @@ class BaseDeepAgent:
         system_prompt = self._build_system_prompt()
 
         # Create agent
-        self.agent = Agent(
+        self.agent = Agent[DeepAgentState, str](
             model=self.config.model_name,
             system_prompt=system_prompt,
             deps_type=DeepAgentState,
@@ -130,61 +127,14 @@ class BaseDeepAgent:
         return get_system_prompt(prompt_components)
 
     def _add_tools(self) -> None:
-        """Register minimal canonical tools for DeepAgent (MVP)."""
-        agent = self.agent
-        if agent is None:
-            return
-        tool_names = set(self.config.tools)
-
-        if (
-            "web_search" in tool_names
-            or AgentCapability.SEARCH in self.config.capabilities
-        ):
-
-            @agent.tool
-            async def web_search(ctx: RunContext[DeepAgentState], query: str) -> str:
-                res = await canonical_registry.aexecute(
-                    "web_search",
-                    {
-                        "query": query,
-                        "search_type": "search",
-                        "num_results": 5,
-                    },
-                )
-                if not res.success:
-                    return f"web_search failed: {res.error}"
-                return str(res.data.get("content", res.data))
-
-        if "chunked_search" in tool_names:
-
-            @agent.tool
-            async def chunked_search(
-                ctx: RunContext[DeepAgentState], query: str
-            ) -> str:
-                res = await canonical_registry.aexecute(
-                    "chunked_search",
-                    {
-                        "query": query,
-                        "search_type": "search",
-                        "num_results": 4,
-                        "chunk_size": 1000,
-                        "chunk_overlap": 0,
-                        "heading_level": 3,
-                        "min_characters_per_chunk": 50,
-                        "max_characters_per_section": 4000,
-                        "clean_text": True,
-                    },
-                )
-                if not res.success:
-                    return f"chunked_search failed: {res.error}"
-                chunks = res.data.get("chunks", [])
-                if not isinstance(chunks, list):
-                    return str(res.data)
-                parts = []
-                for c in chunks[:8]:
-                    if isinstance(c, dict):
-                        parts.append(str(c.get("text") or c.get("content") or ""))
-                return "\n\n".join(parts) if parts else str(res.data)
+        """Add tools to the agent."""
+        # Note: Pydantic AI Agent doesn't support add_tool() method
+        # Tools must be passed during Agent construction, not added dynamically
+        # TODO: Refactor to pass tools during Agent creation in _initialize_agent()
+        # if self.agent is not None:
+        #     for tool_name in self.config.tools:
+        #         if tool_name in tool_map:
+        #             self.agent.add_tool(tool_map[tool_name])
 
     def _initialize_middleware(self) -> None:
         """Initialize middleware pipeline."""
@@ -204,6 +154,9 @@ class BaseDeepAgent:
                 success=False, error="Agent not initialized", execution_time=0.0
             )
 
+        # Type guard: after the check above, self.agent is guaranteed to be non-None
+        assert self.agent is not None
+
         start_time = time.time()
         iterations_used = 0
         tools_used = []
@@ -212,6 +165,20 @@ class BaseDeepAgent:
             # Prepare context
             if context is None:
                 context = DeepAgentState(session_id=f"session_{int(time.time())}")
+
+            # Process middleware
+            if self.middleware_pipeline:
+                middleware_results = await self.middleware_pipeline.process(
+                    cast("Agent | None", self.agent), context
+                )
+                # Check for middleware failures
+                for result in middleware_results:
+                    if not result.success:
+                        return AgentExecutionResult(
+                            success=False,
+                            error=f"Middleware failed: {result.error}",
+                            execution_time=time.time() - start_time,
+                        )
 
             # Execute agent with retry logic
             result = await self._execute_with_retry(input_data, context)
@@ -247,6 +214,9 @@ class BaseDeepAgent:
         self, input_data: str | dict[str, Any], context: DeepAgentState
     ) -> Any:
         """Execute agent with retry logic."""
+        # Type guard: self.agent must be initialized before calling this method
+        assert self.agent is not None
+
         last_error = None
         agent = self.agent
         if agent is None:
@@ -254,9 +224,15 @@ class BaseDeepAgent:
 
         for attempt in range(self.config.retry_attempts + 1):
             try:
-                prompt = input_data if isinstance(input_data, str) else str(input_data)
-                run_result = await agent.run(prompt, deps=context)
-                return {"output": run_result.output}
+                if isinstance(input_data, str):
+                    result = await self.agent.run(input_data, deps=context)
+                else:
+                    # JSON-encode dict to preserve structure for downstream consumers
+                    # (str() would create lossy Python repr like "{'key': 'value'}")
+                    input_str = json.dumps(input_data)
+                    result = await self.agent.run(input_str, deps=context)
+
+                return result
 
             except ModelRetry as e:
                 last_error = e
@@ -582,24 +558,15 @@ class DeepAgentImplementation:
         self.orchestrator = create_agent_orchestrator()
 
     async def execute_task(self, task: str) -> AgentExecutionResult:
-        """Execute a task using the general-purpose or research agent."""
-        if not self.orchestrator:
+        """Execute a task using the appropriate agent."""
+        if self.orchestrator is None:
             return AgentExecutionResult(
-                success=False,
-                error="Orchestrator not initialized",
-                execution_time=0.0,
+                success=False, error="Orchestrator not initialized"
             )
-        general = self.agents.get("general_purpose")
-        if general is not None:
-            return await general.execute(task)
-        research = self.agents.get("research")
-        if research is not None:
-            return await research.execute(task)
-        return AgentExecutionResult(
-            success=False,
-            error="No runnable DeepAgent (general_purpose/research) available",
-            execution_time=0.0,
-        )
+        # TODO: Implement agent selection logic to determine which agent to use
+        # AgentOrchestrator has execute_with_agent(agent_name, input_data, context)
+        # For now, use the general agent as default
+        return await self.orchestrator.execute_with_agent("general", task, None)
 
     def get_agent(self, agent_type: str) -> BaseDeepAgent | None:
         """Get a specific agent by type."""

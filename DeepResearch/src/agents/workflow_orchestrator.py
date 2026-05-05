@@ -44,6 +44,7 @@ from DeepResearch.src.datatypes.workflow_orchestration import (
 )
 from DeepResearch.src.prompts.workflow_orchestrator import WorkflowOrchestratorPrompts
 from DeepResearch.src.tools.registry import canonical_registry
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 logger = logging.getLogger(__name__)
 
@@ -173,13 +174,19 @@ class PrimaryWorkflowOrchestrator:
     def _create_primary_agent(self):
         """Create the primary REACT agent."""
         prompts = WorkflowOrchestratorPrompts()
+        parameters = self.config.primary_workflow.parameters
+        model = parameters.get("model_name") or parameters.get("model")
+        if not model:
+            model = resolve_pydantic_ai_model(
+                parameters,
+                parameters.get("model_role", "workflow_orchestration"),
+            )
+
         instr = prompts.get_instructions()
         instr_str = "\n".join(instr) if isinstance(instr, list) else str(instr)
 
-        self.primary_agent = Agent(
-            model=self.config.primary_workflow.parameters.get(
-                "model_name", DEFAULT_PYDANTIC_AI_MODEL
-            ),
+        self.primary_agent = Agent[OrchestratorDependencies, str](
+            model=model,
             deps_type=OrchestratorDependencies,
             system_prompt=prompts.get_system_prompt(),
             instructions=instr_str,
@@ -372,6 +379,7 @@ class PrimaryWorkflowOrchestrator:
             hypothesis: dict[str, Any],
             test_configuration: dict[str, Any],
             expected_outcomes: list[str],
+            success_criteria: dict[str, Any] | None = None,
         ) -> HypothesisTestingEnvironment:
             """Create a hypothesis testing environment."""
             return HypothesisTestingEnvironment(
@@ -379,6 +387,7 @@ class PrimaryWorkflowOrchestrator:
                 hypothesis=hypothesis,
                 test_configuration=test_configuration,
                 expected_outcomes=expected_outcomes,
+                success_criteria=success_criteria or {"criteria": expected_outcomes},
             )
 
     async def execute_primary_workflow(
@@ -996,78 +1005,71 @@ class PrimaryWorkflowOrchestrator:
         self, input_data: dict[str, Any], parameters: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute hypothesis generation workflow."""
-        from DeepResearch.src.agents.hypothesis_generation_agent import (
-            run_hypothesis_generation_pipeline,
+        from DeepResearch.src.statemachines.hypothesis_workflow import (
+            run_hypothesis_workflow,
         )
 
-        q = str(
+        question = (
             input_data.get("question")
-            or input_data.get("task_description")
-            or input_data.get("research_brief")
+            or input_data.get("user_input")
             or input_data.get("query")
+            or input_data.get("research_question")
             or ""
-        ).strip()
-        if not q:
-            return {
-                "success": False,
-                "error": "Missing question, task_description, research_brief, or query",
-            }
-        wf_name = str(
-            input_data.get("workflow_name") or "hypothesis_generation_subworkflow"
         )
-        input_payload = {
-            **input_data,
-            "question": q,
-            "workflow_name": wf_name,
-            "dataset_name": str(input_data.get("dataset_name", "Hypothesis batch")),
-            "dataset_description": str(
-                input_data.get("dataset_description", f"Hypotheses for: {q[:200]}")
-            ),
-        }
-        pm = self.config.primary_workflow.parameters.get("model_name")
-        merged_params = dict(parameters)
-        try:
-            dataset, meta = await run_hypothesis_generation_pipeline(
-                input_payload,
-                merged_params,
-                default_model=str(pm) if pm else None,
-            )
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-        judge_payload: dict[str, Any] | None = None
-        if merged_params.get("run_quality_judge"):
-            req = JudgeEvaluationRequest(
-                judge_id=str(merged_params.get("judge_id", "hypothesis_quality_judge")),
-                content_to_evaluate={"hypothesis_dataset": dataset.model_dump()},
-                evaluation_criteria=list(
-                    merged_params.get(
-                        "evaluation_criteria",
-                        [
-                            "testability",
-                            "falsifiability",
-                            "evidence_support",
-                        ],
-                    )
-                ),
-                context={"pipeline_metadata": meta},
-            )
-            jr = await self._evaluate_with_judge(req)
-            judge_payload = jr.model_dump()
-        return _hypothesis_generation_return_payload(
-            dataset=dataset,
-            meta=meta,
-            judge_payload=judge_payload,
-            run_quality_judge=bool(merged_params.get("run_quality_judge")),
-        )
+        cfg = self._build_hypothesis_config(parameters, testing_enabled=False)
+        workflow_kwargs: dict[str, Any] = {"mode": "generate"}
+        if input_data.get("existing_hypotheses") is not None:
+            workflow_kwargs["existing_hypotheses"] = input_data["existing_hypotheses"]
+        return await run_hypothesis_workflow(question, cfg, **workflow_kwargs)
 
     async def _execute_hypothesis_testing_workflow(
         self, input_data: dict[str, Any], parameters: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute hypothesis testing workflow."""
-        return {
-            "success": False,
-            "error": "hypothesis_testing workflow is not implemented in MVP",
-        }
+        from DeepResearch.src.statemachines.hypothesis_workflow import (
+            run_hypothesis_workflow,
+        )
+
+        question = (
+            input_data.get("question")
+            or input_data.get("user_input")
+            or input_data.get("query")
+            or input_data.get("research_question")
+            or ""
+        )
+        cfg = self._build_hypothesis_config(parameters, testing_enabled=True)
+        workflow_kwargs: dict[str, Any] = {"mode": "testing"}
+        if input_data.get("existing_hypotheses") is not None:
+            workflow_kwargs["existing_hypotheses"] = input_data["existing_hypotheses"]
+        return await run_hypothesis_workflow(question, cfg, **workflow_kwargs)
+
+    def _build_hypothesis_config(
+        self, parameters: dict[str, Any], *, testing_enabled: bool
+    ) -> DictConfig:
+        """Build a minimal config for delegating hypothesis workflows."""
+        from omegaconf import DictConfig
+
+        mode = "testing" if testing_enabled else "generate"
+        cfg = DictConfig(
+            {
+                "workflow_orchestration": {"enabled": False},
+                "flows": {
+                    "hypothesis_generation": {"enabled": not testing_enabled},
+                    "hypothesis_testing": {"enabled": testing_enabled},
+                },
+                "hypothesis": {
+                    "mode": mode,
+                    "max_hypotheses": parameters.get("max_hypotheses", 3),
+                    "top_k": parameters.get("top_k", 3),
+                    "evidence_mode": parameters.get("evidence_mode", "search_only"),
+                    "generate_testing_plans": testing_enabled
+                    or parameters.get("generate_testing_plans", False),
+                    "score_weights": parameters.get("score_weights", {}),
+                    "existing_hypotheses": parameters.get("existing_hypotheses", []),
+                },
+            }
+        )
+        return cfg
 
     async def _execute_reasoning_workflow(
         self, input_data: dict[str, Any], parameters: dict[str, Any]

@@ -25,6 +25,10 @@ from DeepResearch.src.prompts.hypothesis_generation import (
     build_proposer_user_prompt,
 )
 from DeepResearch.src.utils.hypothesis_evidence import fetch_hypothesis_evidence
+from DeepResearch.src.utils.model_registry import (
+    resolve_model_name,
+    resolve_pydantic_ai_model,
+)
 
 
 class HypothesisBatchOutput(BaseModel):
@@ -79,14 +83,24 @@ def _apply_critiques(
     return out if out else hypotheses
 
 
+def _pydantic_model_for_hypothesis(
+    params: HypothesisGenerationParams,
+) -> str | object:
+    """Use registry resolution when params still reference the default chat model."""
+    default_name = resolve_model_name(None, "default")
+    if params.model_name == default_name:
+        return resolve_pydantic_ai_model(None, "default")
+    return params.model_name
+
+
 async def _run_critic(
-    model_name: str,
+    model: str | object,
     question: str,
     evidence_context: str,
     hypotheses: list[HypothesisCandidate],
 ) -> CritiqueBatch:
     agent = Agent(
-        model=model_name,
+        model=model,
         output_type=CritiqueBatch,
         system_prompt=SYSTEM_CRITIC,
     )
@@ -114,9 +128,7 @@ async def run_hypothesis_generation_pipeline(
     Returns:
         dataset, metadata (timing, flags, evidence info).
     """
-    from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
-
-    dm = default_model or DEFAULT_PYDANTIC_AI_MODEL
+    dm = default_model or resolve_model_name(None, "default")
     params = HypothesisGenerationParams.from_mapping(parameters, default_model=dm)
     question = _extract_question(input_data)
     if not question:
@@ -138,7 +150,7 @@ async def run_hypothesis_generation_pipeline(
     meta.update(ev_meta)
 
     proposer = Agent(
-        model=params.model_name,
+        model=_pydantic_model_for_hypothesis(params),
         output_type=HypothesisBatchOutput,
         system_prompt=SYSTEM_PROPOSER,
     )
@@ -159,7 +171,10 @@ async def run_hypothesis_generation_pipeline(
 
     if params.enable_critic_pass and candidates:
         critique = await _run_critic(
-            params.model_name, question, evidence_text, candidates
+            _pydantic_model_for_hypothesis(params),
+            question,
+            evidence_text,
+            candidates,
         )
         candidates = _apply_critiques(candidates, critique)
 

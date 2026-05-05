@@ -8,10 +8,10 @@ testcontainers deployment.
 
 from __future__ import annotations
 
-import inspect
+import asyncio
 import os
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Coroutine, cast
 
 from DeepResearch.src.datatypes.bioinformatics_mcp import MCPServerBase, mcp_tool
 from DeepResearch.src.datatypes.mcp import (
@@ -164,15 +164,12 @@ class STARServer(MCPServerBase):
             if miss is not None:
                 return miss
 
+            # Call the appropriate method
             result = method(**method_params)
-            if inspect.isawaitable(result):
-                return {
-                    "success": False,
-                    "error": f"Operation {operation} produced an awaitable but run() is synchronous; use an async entrypoint.",
-                }
-            if isinstance(result, dict):
-                return result
-            return {"success": True, "result": result}
+            # Await if it's a coroutine
+            if asyncio.iscoroutine(result):
+                return asyncio.run(cast("Coroutine[Any, Any, dict[str, Any]]", result))
+            return result
         except Exception as e:
             return {
                 "success": False,

@@ -1059,7 +1059,7 @@ class HISAT2Server(MCPServerBase):
             "server_type": self.server_type.value,
             "version": "2.2.1",
             "description": "HISAT2 RNA-seq alignment server with comprehensive parameter support",
-            "tools": [tool.spec.name for tool in self.tools.values()],
+            "tools": [tool["spec"].name for tool in self.tools.values()],
             "capabilities": [
                 "rna_seq",
                 "alignment",

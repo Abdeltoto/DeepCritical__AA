@@ -399,10 +399,10 @@ class TestWorkflowMiddleware:
             assert result["messages"] == messages
             mock_build_pipelines.assert_called_once_with(None, "run_middleware")
 
-        # Test agent.run returns None when middleware result is falsy
+        # Falsy string from pipeline must not be coerced to None
         mock_pipeline = MagicMock()
         mock_pipeline.has_middlewares = True
-        mock_pipeline.execute = AsyncMock(return_value=None)
+        mock_pipeline.execute = AsyncMock(return_value="")
 
         with patch(
             "DeepResearch.src.utils.workflow_middleware._build_middleware_pipelines"
@@ -416,7 +416,7 @@ class TestWorkflowMiddleware:
             agent = decorated_agent_class()
             agent.middleware = MagicMock()
             result = await agent.run([{"role": "user"}], thread="thread_1")
-            assert result is None
+            assert result == ""
 
         # Test agent.run_stream without middleware
         agent = decorated_agent_class()

@@ -14,7 +14,6 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.rag import Chunk, Document
 from DeepResearch.src.tools.integrated_search_tools import IntegratedSearchTool
 from DeepResearch.src.utils.execution_status import ExecutionStatus
@@ -106,7 +105,6 @@ class PerformWebSearch:
 
             # Create SearchAgent with config
             search_config = SearchAgentConfig(
-                model=DEFAULT_PYDANTIC_AI_MODEL,
                 default_num_results=state.num_results,
             )
             search_agent = SearchAgent(search_config)

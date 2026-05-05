@@ -21,14 +21,21 @@ from DeepResearch.src.datatypes.agent_framework_types import AgentRunResponse
 from DeepResearch.src.datatypes.agents import AgentDependencies, AgentResult, AgentType
 from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.statemachines.code_execution_workflow import CodeExecutionWorkflow
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 
 class CodeExecutionConfig(BaseModel):
     """Configuration for code execution orchestrator."""
 
     # Agent configuration
-    generation_model: str = Field(
-        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model for code generation"
+    generation_model: str | None = Field(
+        None, description="Explicit model for code generation"
+    )
+    generation_model_role: str = Field(
+        "code_generation", description="Model-registry role for code generation"
+    )
+    models: dict[str, Any] | None = Field(
+        None, description="Optional model registry configuration"
     )
 
     # Execution configuration
@@ -73,16 +80,20 @@ class CodeExecutionOrchestrator:
             config: Configuration for the orchestrator
         """
         self.config = config or CodeExecutionConfig()
+        generation_model = self.config.generation_model or resolve_pydantic_ai_model(
+            {"models": self.config.models} if self.config.models else None,
+            self.config.generation_model_role,
+        )
 
         # Initialize agents
         self.generation_agent = CodeGenerationAgent(
-            model_name=self.config.generation_model,
+            model_name=generation_model,
             max_retries=self.config.max_retries,
             timeout=self.config.generation_timeout,
         )
 
         self.execution_agent = CodeExecutionAgent(
-            model_name=self.config.generation_model,
+            model_name=generation_model,
             use_docker=self.config.use_docker,
             use_jupyter=self.config.use_jupyter,
             jupyter_config=self.config.jupyter_config,
@@ -94,12 +105,12 @@ class CodeExecutionOrchestrator:
         from DeepResearch.src.agents.code_improvement_agent import CodeImprovementAgent
 
         self.improvement_agent = CodeImprovementAgent(
-            model_name=self.config.generation_model,
+            model_name=generation_model,
             max_improvement_attempts=self.config.max_improvement_attempts,
         )
 
         self.agent_system = CodeExecutionAgentSystem(
-            generation_model=self.config.generation_model,
+            generation_model=generation_model,
             execution_config={
                 "use_docker": self.config.use_docker,
                 "use_jupyter": self.config.use_jupyter,
@@ -111,6 +122,13 @@ class CodeExecutionOrchestrator:
 
         # Initialize workflow
         self.workflow = CodeExecutionWorkflow() if self.config.use_workflow else None
+
+    def _resolve_generation_model(self) -> Any:
+        """Resolve the configured generation model through the model registry."""
+        return self.config.generation_model or resolve_pydantic_ai_model(
+            {"models": self.config.models} if self.config.models else None,
+            self.config.generation_model_role,
+        )
 
     async def process_request(
         self,
@@ -159,7 +177,7 @@ class CodeExecutionOrchestrator:
                 else {},
                 metadata={
                     "orchestrator": "code_execution",
-                    "generation_model": self.config.generation_model,
+                    "generation_model": self._resolve_generation_model(),
                     "execution_config": self.config.model_dump(),
                 },
                 error=None,
@@ -181,9 +199,9 @@ class CodeExecutionOrchestrator:
         self, user_message: str, code_type: str | None = None, **kwargs
     ) -> AgentRunResponse | None:
         """Execute using the state machine workflow."""
-        workflow = self.workflow
-        if workflow is None:
-            return None
+        # Type guard: workflow must be initialized for this method to be called
+        assert self.workflow is not None
+
         workflow_config = {
             "use_docker": kwargs.get("use_docker", self.config.use_docker),
             "use_jupyter": kwargs.get("use_jupyter", self.config.use_jupyter),
@@ -198,7 +216,7 @@ class CodeExecutionOrchestrator:
             ),
         }
 
-        state = await workflow.execute(
+        state = await self.workflow.execute(
             user_query=user_message, code_type=code_type, **workflow_config
         )
 
@@ -405,10 +423,17 @@ class CodeExecutionOrchestrator:
         # Reinitialize agents if necessary
         if any(
             key in kwargs
-            for key in ["generation_model", "max_retries", "generation_timeout"]
+            for key in [
+                "generation_model",
+                "generation_model_role",
+                "models",
+                "max_retries",
+                "generation_timeout",
+            ]
         ):
+            generation_model = self._resolve_generation_model()
             self.generation_agent = CodeGenerationAgent(
-                model_name=self.config.generation_model,
+                model_name=generation_model,
                 max_retries=self.config.max_retries,
                 timeout=self.config.generation_timeout,
             )
@@ -423,8 +448,9 @@ class CodeExecutionOrchestrator:
                 "execution_timeout",
             ]
         ):
+            generation_model = self._resolve_generation_model()
             self.execution_agent = CodeExecutionAgent(
-                model_name=self.config.generation_model,
+                model_name=generation_model,
                 use_docker=self.config.use_docker,
                 use_jupyter=self.config.use_jupyter,
                 jupyter_config=self.config.jupyter_config,
@@ -458,7 +484,7 @@ async def execute_auto_code(description: str, **kwargs) -> AgentResult:
 
 # Factory function for creating configured orchestrators
 def create_code_execution_orchestrator(
-    generation_model: str = DEFAULT_PYDANTIC_AI_MODEL,
+    generation_model: str | None = None,
     use_docker: bool = True,
     use_jupyter: bool = False,
     max_retries: int = 3,

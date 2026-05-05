@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -104,12 +105,11 @@ async def test_fetch_hypothesis_evidence_degraded() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_hypothesis_generation_workflow_mocked_pipeline() -> None:
-    async def fake_pipeline(
-        input_data: dict,
-        parameters: dict,
-        *,
-        default_model: str | None = None,
-    ):
+    async def fake_run_hypothesis_workflow(
+        question: str,
+        cfg: Any | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         c = HypothesisCandidate(
             statement="Mock hypothesis",
             hypothesis_type=HypothesisType.CAUSAL,
@@ -119,9 +119,14 @@ async def test_execute_hypothesis_generation_workflow_mocked_pipeline() -> None:
             "batch",
             "desc",
             [c],
-            [str(input_data.get("workflow_name", ""))],
+            [""],
         )
-        return ds, {"evidence_degraded": False, "chunk_count": 0}
+        return {
+            "success": True,
+            "hypothesis_dataset": ds,
+            "hypotheses": [{"statement": "Mock hypothesis"}],
+            "answer": "Summary with Mock hypothesis",
+        }
 
     cfg = WorkflowOrchestrationConfig(
         primary_workflow=WorkflowConfig(
@@ -136,8 +141,8 @@ async def test_execute_hypothesis_generation_workflow_mocked_pipeline() -> None:
             return_value=MagicMock(),
         ),
         patch(
-            "DeepResearch.src.agents.hypothesis_generation_agent.run_hypothesis_generation_pipeline",
-            new=fake_pipeline,
+            "DeepResearch.src.statemachines.hypothesis_workflow.run_hypothesis_workflow",
+            new=fake_run_hypothesis_workflow,
         ),
     ):
         orch = PrimaryWorkflowOrchestrator(cfg)

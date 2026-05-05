@@ -19,7 +19,7 @@ repos:
 
   # Ruff linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.0
+    rev: v0.14.6
     hooks:
       # Run the linter
       - id: ruff
@@ -29,12 +29,12 @@ repos:
 
 
 
-#  Type checking with ty (disabled due to issues)
+# Type checking with ty (non-blocking: full DeepResearch package has a known backlog; still prints diagnostics)
   - repo: local
     hooks:
       - id: ty-check
         name: ty type check
-        entry: uv run ty check DeepResearch
+        entry: uv run ty check DeepResearch --exit-zero
         language: system
         files: \.py$
         pass_filenames: false

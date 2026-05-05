@@ -9,6 +9,7 @@ and RAG workflows.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Any, cast
@@ -25,6 +26,7 @@ from .src.agents.deep_agent_implementations import (
     ResearchAgent,
     TaskOrchestrationAgent,
 )
+from .src.datatypes.agent_taxonomy import DEEP_AGENT_TYPES
 from .src.datatypes.agents import (
     AgentDependencies,
     AgentResult,
@@ -43,6 +45,9 @@ from .src.prompts.agents import AgentPrompts
 
 # Import existing tools and schemas
 from .src.tools.base import ExecutionResult, registry
+from .src.utils.model_registry import resolve_pydantic_ai_model
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -80,19 +85,22 @@ class BaseAgent(ABC):
     def __init__(
         self,
         agent_type: AgentType,
-        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+        model_name: Any | None = None,
         dependencies: AgentDependencies | None = None,
         system_prompt: str | None = None,
         instructions: str | None = None,
+        model_role: str = "default",
+        config: dict[str, Any] | None = None,
     ):
         self.agent_type = agent_type
-        self.model_name = model_name
+        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_role = model_role
+        self.config = config or {}
         self.dependencies = dependencies or AgentDependencies()
         self.status = AgentStatus.IDLE
         self.history = ExecutionHistory()
-        # NOTE: We keep this optional to allow graceful initialization failure,
-        # but we always treat it as `Agent[AgentDependencies, Any]` when present.
-        self._agent: Agent[AgentDependencies, Any] | None = None
+        self._agent: Agent[AgentDependencies, str] | None = None
+        self._initialization_error: str | None = None
 
         # Initialize Pydantic AI agent
         self._initialize_agent(system_prompt, instructions)
@@ -100,22 +108,22 @@ class BaseAgent(ABC):
     def _initialize_agent(self, system_prompt: str | None, instructions: str | None):
         """Initialize the Pydantic AI agent."""
         try:
-            self._agent = cast(
-                "Agent[AgentDependencies, Any]",
-                Agent(
-                    self.model_name,
-                    deps_type=AgentDependencies,
-                    system_prompt=system_prompt or self._get_default_system_prompt(),
-                    instructions=instructions or self._get_default_instructions(),
-                ),
+            self._agent = Agent[AgentDependencies, str](
+                self.model_name,
+                deps_type=AgentDependencies,
+                system_prompt=system_prompt or self._get_default_system_prompt(),
+                instructions=instructions or self._get_default_instructions(),
             )
 
             # Register tools
             self._register_tools()
 
         except Exception as e:
-            print(f"Failed to initialize agent: {e}")
+            logger.exception("Failed to initialize pydantic-ai Agent")
             self._agent = None
+            self._initialization_error = str(e)
+        else:
+            self._initialization_error = None
 
     def _get_default_system_prompt(self) -> str:
         """
@@ -229,9 +237,10 @@ class BaseAgent(ABC):
 
         try:
             if not self._agent:
+                detail = self._initialization_error or "Agent not properly initialized"
                 return AgentResult(
                     success=False,
-                    error="Agent not properly initialized",
+                    error=detail,
                     agent_type=self.agent_type,
                 )
 
@@ -293,8 +302,13 @@ class BaseAgent(ABC):
 class ParserAgent(BaseAgent):
     """Agent for parsing and understanding research questions."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.PARSER, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "parser",
+        **kwargs: Any,
+    ):
+        super().__init__(AgentType.PARSER, model_name, model_role=model_role, **kwargs)
 
     def _register_tools(self):
         """Register parsing tools."""
@@ -318,8 +332,13 @@ class ParserAgent(BaseAgent):
 class PlannerAgent(BaseAgent):
     """Agent for planning research workflows."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.PLANNER, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "planner",
+        **kwargs: Any,
+    ):
+        super().__init__(AgentType.PLANNER, model_name, model_role=model_role, **kwargs)
 
     def _register_tools(self):
         """Register planning tools."""
@@ -372,20 +391,27 @@ class ExecutorAgent(BaseAgent):
 
     def __init__(
         self,
-        model_name: str = DEFAULT_PYDANTIC_AI_MODEL,
+        model_name: Any | None = None,
         retries: int = 2,
-        **kwargs,
+        model_role: str = "executor",
+        **kwargs: Any,
     ):
         self.retries = retries
-        super().__init__(AgentType.EXECUTOR, model_name, **kwargs)
+        super().__init__(
+            AgentType.EXECUTOR, model_name, model_role=model_role, **kwargs
+        )
 
     def _register_tools(self):
         """Register execution tools."""
-        # Tools in DeepCritical are executed through the `registry` directly (see
-        # `execute_plan`). PydanticAI tool registration requires a different
-        # callable signature, so we intentionally do not register ToolRunner.run
-        # here to keep type-safety and avoid runtime mismatches.
-        return
+        if self._agent is None:
+            return
+        # Register all available tools
+        for tool_name in registry.list():
+            try:
+                tool_runner = registry.make(tool_name)
+                self._agent.tool(tool_runner.run)
+            except Exception:
+                pass
 
     async def execute_plan(
         self, plan: list[dict[str, Any]], history: ExecutionHistory
@@ -484,16 +510,30 @@ class ExecutorAgent(BaseAgent):
 class SearchAgent(BaseAgent):
     """Agent for web search operations."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.SEARCH, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "search",
+        **kwargs: Any,
+    ):
+        super().__init__(AgentType.SEARCH, model_name, model_role=model_role, **kwargs)
 
     def _register_tools(self):
         """Register search tools."""
-        # ToolRunner-based tools in this repo use a `(params: dict) -> ExecutionResult`
-        # signature and are executed via the `registry` directly (see `ExecutorAgent`).
-        # PydanticAI tool registration requires a different callable signature, so we
-        # intentionally do not register these `.run()` methods.
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.websearch_tools import ChunkedSearchTool, WebSearchTool
+
+            # Register web search tools
+            web_search_tool = WebSearchTool()
+            self._agent.tool(web_search_tool.run)
+
+            chunked_search_tool = ChunkedSearchTool()
+            self._agent.tool(chunked_search_tool.run)
+
+        except Exception:
+            pass
 
     async def search(
         self, query: str, search_type: str = "search", num_results: int = 10
@@ -512,12 +552,33 @@ class SearchAgent(BaseAgent):
 class RAGAgent(BaseAgent):
     """Agent for RAG (Retrieval-Augmented Generation) operations."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.RAG, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "rag",
+        **kwargs: Any,
+    ):
+        super().__init__(AgentType.RAG, model_name, model_role=model_role, **kwargs)
 
     def _register_tools(self):
         """Register RAG tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.integrated_search_tools import (
+                IntegratedSearchTool,
+                RAGSearchTool,
+            )
+
+            # Register RAG tools
+            integrated_search_tool = IntegratedSearchTool()
+            self._agent.tool(integrated_search_tool.run)
+
+            rag_search_tool = RAGSearchTool()
+            self._agent.tool(rag_search_tool.run)
+
+        except Exception:
+            pass
 
     async def query(self, rag_query: RAGQuery) -> RAGResponse:
         """Perform RAG query."""
@@ -538,12 +599,47 @@ class RAGAgent(BaseAgent):
 class BioinformaticsAgent(BaseAgent):
     """Agent for bioinformatics data fusion and reasoning."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.BIOINFORMATICS, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "bioinformatics",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.BIOINFORMATICS, model_name, model_role=model_role, **kwargs
+        )
 
     def _register_tools(self):
         """Register bioinformatics tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.bioinformatics_tools import (
+                BioinformaticsFusionTool,
+                BioinformaticsReasoningTool,
+                BioinformaticsWorkflowTool,
+                GOAnnotationTool,
+                PubMedRetrievalTool,
+            )
+
+            # Register bioinformatics tools
+            fusion_tool = BioinformaticsFusionTool()
+            self._agent.tool(fusion_tool.run)
+
+            reasoning_tool = BioinformaticsReasoningTool()
+            self._agent.tool(reasoning_tool.run)
+
+            workflow_tool = BioinformaticsWorkflowTool()
+            self._agent.tool(workflow_tool.run)
+
+            go_tool = GOAnnotationTool()
+            self._agent.tool(go_tool.run)
+
+            pubmed_tool = PubMedRetrievalTool()
+            self._agent.tool(pubmed_tool.run)
+
+        except Exception:
+            pass
 
     async def fuse_data(self, fusion_request: DataFusionRequest) -> FusedDataset:
         """Fuse bioinformatics data from multiple sources."""
@@ -571,12 +667,57 @@ class BioinformaticsAgent(BaseAgent):
 class DeepSearchAgent(BaseAgent):
     """Agent for deep search operations with iterative refinement."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.DEEPSEARCH, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "deepsearch",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.DEEPSEARCH, model_name, model_role=model_role, **kwargs
+        )
 
     def _register_tools(self):
         """Register deep search tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.deepsearch_tools import (
+                AnswerGeneratorTool,
+                QueryRewriterTool,
+                ReflectionTool,
+                URLVisitTool,
+                WebSearchTool,
+            )
+            from .src.tools.deepsearch_workflow_tool import (
+                DeepSearchAgentTool,
+                DeepSearchWorkflowTool,
+            )
+
+            # Register deep search tools
+            web_search_tool = WebSearchTool()
+            self._agent.tool(web_search_tool.run)
+
+            url_visit_tool = URLVisitTool()
+            self._agent.tool(url_visit_tool.run)
+
+            reflection_tool = ReflectionTool()
+            self._agent.tool(reflection_tool.run)
+
+            answer_tool = AnswerGeneratorTool()
+            self._agent.tool(answer_tool.run)
+
+            rewriter_tool = QueryRewriterTool()
+            self._agent.tool(rewriter_tool.run)
+
+            workflow_tool = DeepSearchWorkflowTool()
+            self._agent.tool(workflow_tool.run)
+
+            agent_tool = DeepSearchAgentTool()
+            self._agent.tool(agent_tool.run)
+
+        except Exception:
+            pass
 
     async def deep_search(self, question: str, max_steps: int = 20) -> dict[str, Any]:
         """Perform deep search with iterative refinement."""
@@ -589,12 +730,32 @@ class DeepSearchAgent(BaseAgent):
 class EvaluatorAgent(BaseAgent):
     """Agent for evaluating research results and quality."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.EVALUATOR, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "evaluator",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.EVALUATOR, model_name, model_role=model_role, **kwargs
+        )
 
     def _register_tools(self):
         """Register evaluation tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.workflow_tools import ErrorAnalyzerTool, EvaluatorTool
+
+            # Register evaluation tools
+            evaluator_tool = EvaluatorTool()
+            self._agent.tool(evaluator_tool.run)
+
+            error_analyzer_tool = ErrorAnalyzerTool()
+            self._agent.tool(error_analyzer_tool.run)
+
+        except Exception:
+            pass
 
     async def evaluate(self, question: str, answer: str) -> dict[str, Any]:
         """Evaluate research results."""
@@ -610,8 +771,18 @@ class EvaluatorAgent(BaseAgent):
 class DeepAgentPlanningAgent(BaseAgent):
     """DeepAgent planning agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.DEEP_AGENT_PLANNING, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "deep_agent",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.DEEP_AGENT_PLANNING,
+            model_name,
+            model_role=model_role,
+            **kwargs,
+        )
         self._deep_agent = None
         self._initialize_deep_agent()
 
@@ -639,7 +810,17 @@ class DeepAgentPlanningAgent(BaseAgent):
 
     def _register_tools(self):
         """Register planning tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.deep_agent_tools import task_tool, write_todos_tool
+
+            # Register DeepAgent tools
+            self._agent.tool(write_todos_tool)
+            self._agent.tool(task_tool)
+
+        except Exception:
+            pass
 
     async def create_plan(
         self, task_description: str, context: DeepAgentState | None = None
@@ -661,8 +842,18 @@ class DeepAgentPlanningAgent(BaseAgent):
 class DeepAgentFilesystemAgent(BaseAgent):
     """DeepAgent filesystem agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.DEEP_AGENT_FILESYSTEM, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "deep_agent",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.DEEP_AGENT_FILESYSTEM,
+            model_name,
+            model_role=model_role,
+            **kwargs,
+        )
         self._deep_agent = None
         self._initialize_deep_agent()
 
@@ -690,7 +881,24 @@ class DeepAgentFilesystemAgent(BaseAgent):
 
     def _register_tools(self):
         """Register filesystem tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.deep_agent_tools import (
+                edit_file_tool,
+                list_files_tool,
+                read_file_tool,
+                write_file_tool,
+            )
+
+            # Register DeepAgent tools
+            self._agent.tool(list_files_tool)
+            self._agent.tool(read_file_tool)
+            self._agent.tool(write_file_tool)
+            self._agent.tool(edit_file_tool)
+
+        except Exception:
+            pass
 
     async def manage_files(
         self, operation: str, context: DeepAgentState | None = None
@@ -712,8 +920,18 @@ class DeepAgentFilesystemAgent(BaseAgent):
 class DeepAgentResearchAgent(BaseAgent):
     """DeepAgent research agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.DEEP_AGENT_RESEARCH, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "deep_agent",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.DEEP_AGENT_RESEARCH,
+            model_name,
+            model_role=model_role,
+            **kwargs,
+        )
         self._deep_agent = None
         self._initialize_deep_agent()
 
@@ -738,7 +956,25 @@ class DeepAgentResearchAgent(BaseAgent):
 
     def _register_tools(self):
         """Register research tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.deep_agent_tools import task_tool
+            from .src.tools.integrated_search_tools import RAGSearchTool
+            from .src.tools.websearch_tools import WebSearchTool
+
+            # Register DeepAgent tools
+            self._agent.tool(task_tool)
+
+            # Register existing research tools
+            web_search_tool = WebSearchTool()
+            self._agent.tool(web_search_tool.run)
+
+            rag_search_tool = RAGSearchTool()
+            self._agent.tool(rag_search_tool.run)
+
+        except Exception:
+            pass
 
     async def conduct_research(
         self, research_query: str, context: DeepAgentState | None = None
@@ -760,8 +996,18 @@ class DeepAgentResearchAgent(BaseAgent):
 class DeepAgentOrchestrationAgent(BaseAgent):
     """DeepAgent orchestration agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.DEEP_AGENT_ORCHESTRATION, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "deep_agent",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.DEEP_AGENT_ORCHESTRATION,
+            model_name,
+            model_role=model_role,
+            **kwargs,
+        )
         self._deep_agent = None
         self._orchestrator = None
         self._initialize_deep_agent()
@@ -794,7 +1040,16 @@ class DeepAgentOrchestrationAgent(BaseAgent):
 
     def _register_tools(self):
         """Register orchestration tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.deep_agent_tools import task_tool
+
+            # Register DeepAgent tools
+            self._agent.tool(task_tool)
+
+        except Exception:
+            pass
 
     async def orchestrate_tasks(
         self, task_description: str, context: DeepAgentState | None = None
@@ -829,8 +1084,18 @@ class DeepAgentOrchestrationAgent(BaseAgent):
 class DeepAgentGeneralAgent(BaseAgent):
     """DeepAgent general-purpose agent integrated with DeepResearch."""
 
-    def __init__(self, model_name: str = DEFAULT_PYDANTIC_AI_MODEL, **kwargs):
-        super().__init__(AgentType.DEEP_AGENT_GENERAL, model_name, **kwargs)
+    def __init__(
+        self,
+        model_name: Any | None = None,
+        model_role: str = "deep_agent",
+        **kwargs: Any,
+    ):
+        super().__init__(
+            AgentType.DEEP_AGENT_GENERAL,
+            model_name,
+            model_role=model_role,
+            **kwargs,
+        )
         self._deep_agent = None
         self._initialize_deep_agent()
 
@@ -859,7 +1124,29 @@ class DeepAgentGeneralAgent(BaseAgent):
 
     def _register_tools(self):
         """Register general tools."""
-        return
+        if self._agent is None:
+            return
+        try:
+            from .src.tools.deep_agent_tools import (
+                list_files_tool,
+                read_file_tool,
+                task_tool,
+                write_todos_tool,
+            )
+            from .src.tools.websearch_tools import WebSearchTool
+
+            # Register DeepAgent tools
+            self._agent.tool(task_tool)
+            self._agent.tool(write_todos_tool)
+            self._agent.tool(list_files_tool)
+            self._agent.tool(read_file_tool)
+
+            # Register existing tools
+            web_search_tool = WebSearchTool()
+            self._agent.tool(web_search_tool.run)
+
+        except Exception:
+            pass
 
     async def handle_general_task(
         self, task_description: str, context: DeepAgentState | None = None
@@ -889,34 +1176,39 @@ class MultiAgentOrchestrator:
 
     def _initialize_agents(self):
         """Initialize all available agents."""
-        model_name = self.config.get("model", DEFAULT_PYDANTIC_AI_MODEL)
+        explicit_model = self.config.get("model")
+
+        def model_for(role: str) -> Any:
+            return explicit_model or resolve_pydantic_ai_model(self.config, role)
 
         # Initialize core agents
-        self.agents[AgentType.PARSER] = ParserAgent(model_name)
-        self.agents[AgentType.PLANNER] = PlannerAgent(model_name)
-        self.agents[AgentType.EXECUTOR] = ExecutorAgent(model_name)
-        self.agents[AgentType.SEARCH] = SearchAgent(model_name)
-        self.agents[AgentType.RAG] = RAGAgent(model_name)
-        self.agents[AgentType.BIOINFORMATICS] = BioinformaticsAgent(model_name)
-        self.agents[AgentType.DEEPSEARCH] = DeepSearchAgent(model_name)
-        self.agents[AgentType.EVALUATOR] = EvaluatorAgent(model_name)
+        self.agents[AgentType.PARSER] = ParserAgent(model_for("parser"))
+        self.agents[AgentType.PLANNER] = PlannerAgent(model_for("planner"))
+        self.agents[AgentType.EXECUTOR] = ExecutorAgent(model_for("executor"))
+        self.agents[AgentType.SEARCH] = SearchAgent(model_for("search"))
+        self.agents[AgentType.RAG] = RAGAgent(model_for("rag"))
+        self.agents[AgentType.BIOINFORMATICS] = BioinformaticsAgent(
+            model_for("bioinformatics")
+        )
+        self.agents[AgentType.DEEPSEARCH] = DeepSearchAgent(model_for("deepsearch"))
+        self.agents[AgentType.EVALUATOR] = EvaluatorAgent(model_for("evaluator"))
 
         # Initialize DeepAgent agents if enabled
         if self.config.get("deep_agent", {}).get("enabled", False):
             self.agents[AgentType.DEEP_AGENT_PLANNING] = DeepAgentPlanningAgent(
-                model_name
+                model_for("deep_agent")
             )
             self.agents[AgentType.DEEP_AGENT_FILESYSTEM] = DeepAgentFilesystemAgent(
-                model_name
+                model_for("deep_agent")
             )
             self.agents[AgentType.DEEP_AGENT_RESEARCH] = DeepAgentResearchAgent(
-                model_name
+                model_for("deep_agent")
             )
             self.agents[AgentType.DEEP_AGENT_ORCHESTRATION] = (
-                DeepAgentOrchestrationAgent(model_name)
+                DeepAgentOrchestrationAgent(model_for("deep_agent"))
             )
             self.agents[AgentType.DEEP_AGENT_GENERAL] = DeepAgentGeneralAgent(
-                model_name
+                model_for("deep_agent")
             )
 
     async def execute_workflow(
@@ -927,12 +1219,12 @@ class MultiAgentOrchestrator:
 
         try:
             # Step 1: Parse the question
-            parser = cast("ParserAgent", self.agents[AgentType.PARSER])
-            parsed = await parser.parse_question(question)
+            parser = self.agents[AgentType.PARSER]
+            parsed = await cast("ParserAgent", parser).parse_question(question)
 
             # Step 2: Create execution plan
-            planner = cast("PlannerAgent", self.agents[AgentType.PLANNER])
-            plan = await planner.create_plan(parsed)
+            planner = self.agents[AgentType.PLANNER]
+            plan = await cast("PlannerAgent", planner).create_plan(parsed)
 
             # Step 3: Execute based on workflow type
             if workflow_type == "bioinformatics":
@@ -949,8 +1241,10 @@ class MultiAgentOrchestrator:
                 result = await self._execute_standard_workflow(question, parsed, plan)
 
             # Step 4: Evaluate results
-            evaluator = cast("EvaluatorAgent", self.agents[AgentType.EVALUATOR])
-            evaluation = await evaluator.evaluate(question, result.get("answer", ""))
+            evaluator = self.agents[AgentType.EVALUATOR]
+            evaluation = await cast("EvaluatorAgent", evaluator).evaluate(
+                question, result.get("answer", "")
+            )
 
             execution_time = time.time() - start_time
 
@@ -979,8 +1273,8 @@ class MultiAgentOrchestrator:
         self, question: str, _parsed: dict[str, Any], plan: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Execute standard research workflow."""
-        executor = cast("ExecutorAgent", self.agents[AgentType.EXECUTOR])
-        return await executor.execute_plan(plan, self.history)
+        executor = self.agents[AgentType.EXECUTOR]
+        return await cast("ExecutorAgent", executor).execute_plan(plan, self.history)
 
     async def _execute_bioinformatics_workflow(
         self, question: str, _parsed: dict[str, Any], _plan: list[dict[str, Any]]
@@ -1024,8 +1318,8 @@ class MultiAgentOrchestrator:
         self, question: str, _parsed: dict[str, Any], _plan: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Execute deep search workflow."""
-        deepsearch_agent = cast("DeepSearchAgent", self.agents[AgentType.DEEPSEARCH])
-        return await deepsearch_agent.deep_search(question)
+        deepsearch_agent = self.agents[AgentType.DEEPSEARCH]
+        return await cast("DeepSearchAgent", deepsearch_agent).deep_search(question)
 
     async def _execute_rag_workflow(
         self, question: str, _parsed: dict[str, Any], _plan: list[dict[str, Any]]
@@ -1060,17 +1354,19 @@ class MultiAgentOrchestrator:
 
         # Use general DeepAgent for orchestration
         if AgentType.DEEP_AGENT_GENERAL in self.agents:
-            general_agent = cast(
-                "DeepAgentGeneralAgent", self.agents[AgentType.DEEP_AGENT_GENERAL]
-            )
-            result = await general_agent.handle_general_task(question, initial_state)
+            general_agent = self.agents[AgentType.DEEP_AGENT_GENERAL]
+            result = await cast(
+                "DeepAgentGeneralAgent", general_agent
+            ).handle_general_task(question, initial_state)
 
             if result.success:
                 return {
                     "deep_agent_result": result.result,
                     "answer": (result.result or {}).get(
                         "final_result", "DeepAgent workflow completed"
-                    ),
+                    )
+                    if result.result is not None
+                    else "DeepAgent workflow completed",
                     "execution_metadata": {
                         "execution_time": result.execution_time,
                         "tools_used": result.tools_used,
@@ -1080,20 +1376,19 @@ class MultiAgentOrchestrator:
 
         # Fallback to orchestration agent
         if AgentType.DEEP_AGENT_ORCHESTRATION in self.agents:
-            orchestration_agent = cast(
-                "DeepAgentOrchestrationAgent",
-                self.agents[AgentType.DEEP_AGENT_ORCHESTRATION],
-            )
-            result = await orchestration_agent.orchestrate_tasks(
-                question, initial_state
-            )
+            orchestration_agent = self.agents[AgentType.DEEP_AGENT_ORCHESTRATION]
+            result = await cast(
+                "DeepAgentOrchestrationAgent", orchestration_agent
+            ).orchestrate_tasks(question, initial_state)
 
             if result.success:
                 return {
                     "deep_agent_result": result.result,
                     "answer": (result.result or {}).get(
                         "result_synthesis", "DeepAgent orchestration completed"
-                    ),
+                    )
+                    if result.result is not None
+                    else "DeepAgent orchestration completed",
                     "execution_metadata": {
                         "execution_time": result.execution_time,
                         "tools_used": result.tools_used,
@@ -1111,6 +1406,17 @@ class MultiAgentOrchestrator:
 # Factory functions for creating agents
 def create_agent(agent_type: AgentType, **kwargs) -> BaseAgent:
     """Create an agent of the specified type."""
+    cfg = kwargs.get("config")
+    if agent_type in DEEP_AGENT_TYPES and not (
+        isinstance(cfg, dict) and cfg.get("deep_agent", {}).get("enabled", False)
+    ):
+        msg = (
+            f"Agent type {agent_type.value!r} requires "
+            "`config['deep_agent']['enabled'] == True` (same gate as "
+            "MultiAgentOrchestrator)."
+        )
+        raise ValueError(msg)
+
     agent_classes = {
         AgentType.PARSER: ParserAgent,
         AgentType.PLANNER: PlannerAgent,
