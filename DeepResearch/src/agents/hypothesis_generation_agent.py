@@ -9,7 +9,8 @@ import time
 from typing import Any
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelSettings
+from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
 
 from DeepResearch.src.datatypes.hypothesis_generation import (
     HypothesisCandidate,

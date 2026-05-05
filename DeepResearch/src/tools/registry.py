@@ -230,3 +230,16 @@ class ToolRegistry:
 
 # Canonical singleton used throughout the codebase.
 canonical_registry = ToolRegistry()
+
+
+def list_registered_tools() -> list[str]:
+    """Registered canonical tool names."""
+    from DeepResearch.src.tools import bootstrap_default_tools
+
+    bootstrap_default_tools()
+    return canonical_registry.list_tools()
+
+
+# ``from DeepResearch.src.tools import registry`` resolves to this submodule when
+# present; tests and callers expect ``registry.list()`` at module level.
+list = list_registered_tools

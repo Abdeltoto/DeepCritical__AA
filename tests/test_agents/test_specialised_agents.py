@@ -8,6 +8,7 @@ and EvaluatorAgent.
 
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -52,6 +53,16 @@ from DeepResearch.src.datatypes.rag import (
     SearchResult,
     SearchType,
 )
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
+
+
+def _patch_pydantic_agent_class(mock_agent_instance: MagicMock):
+    """Patch Agent so ``Agent[Deps, Result](...)`` resolves (pydantic-ai generic Agent API)."""
+
+    constructor = MagicMock(return_value=mock_agent_instance)
+    agent_cls = MagicMock()
+    agent_cls.__getitem__ = MagicMock(return_value=constructor)
+    return patch("DeepResearch.agents.Agent", agent_cls)
 
 
 # Fixtures
@@ -722,7 +733,7 @@ class TestSearchAgent:
             agent = SearchAgent()
 
             assert agent.agent_type == AgentType.SEARCH
-            assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
+            assert agent.model_name == resolve_pydantic_ai_model(None, "search")
 
     def test_search_agent_custom_model(self):
         """Test SearchAgent with custom model."""
@@ -823,7 +834,7 @@ class TestSearchAgent:
             assert result == {"error": "Search failed due to network timeout"}
 
     def test_tool_registration_success(self):
-        """SearchAgent intentionally skips pydantic-ai tool registration for web tools."""
+        """SearchAgent registers web search tools on the pydantic-ai Agent."""
         # Mock the Pydantic AI Agent instance
         mock_agent_instance = Mock()
 
@@ -841,9 +852,11 @@ class TestSearchAgent:
 
                 agent._register_tools()
 
-                mock_web_search_tool_cls.assert_not_called()
-                mock_chunked_search_tool_cls.assert_not_called()
-                mock_agent_instance.tool.assert_not_called()
+                # __init__ registers tools on the patched Agent(); we then replace _agent
+                # and register again on mock_agent_instance.
+                assert mock_web_search_tool_cls.call_count == 2
+                assert mock_chunked_search_tool_cls.call_count == 2
+                assert mock_agent_instance.tool.call_count == 2
 
     def test_tool_registration_failure_graceful(self):
         """Test that SearchAgent handles tool import failures gracefully."""
@@ -870,7 +883,9 @@ class TestSearchAgent:
 
                         # Verify the agent was created successfully despite the import failure
                         assert agent.agent_type == AgentType.SEARCH
-                        assert agent.model_name == DEFAULT_PYDANTIC_AI_MODEL
+                        assert agent.model_name == resolve_pydantic_ai_model(
+                            None, "search"
+                        )
 
                         # Verify that the tool method was never called (since imports failed)
                         mock_tool_method.assert_not_called()
@@ -1029,7 +1044,7 @@ class TestRAGAgent:
         assert agent._agent is None
 
     def test_initialize_agent_registers_rag_tools_successfully(self, monkeypatch):
-        """RAGAgent skips pydantic-ai IntegratedSearchTool registration (noop _register_tools)."""
+        """RAGAgent registers integrated search tools on the pydantic-ai Agent."""
 
         with patch(
             "DeepResearch.src.tools.integrated_search_tools.IntegratedSearchTool"
@@ -1041,7 +1056,7 @@ class TestRAGAgent:
                     agent = RAGAgent()
                     agent._initialize_agent(system_prompt="Test", instructions="Test")
                     agent._register_tools()
-                    assert not MockIntegrated.called
+                    assert MockIntegrated.called
                     assert hasattr(agent._agent, "tool")
 
 
@@ -1070,20 +1085,20 @@ class TestBioinformaticsAgent:
     @pytest.mark.asyncio
     async def test_fuse_data_success(self, mock_pydantic_agent):
         """Test successful data fusion."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
-            agent = BioinformaticsAgent()
-
-            mock_result = Mock(spec=AgentResult)
-            mock_result.success = True
-            mock_result.data = {
-                "fused_dataset": {
-                    "dataset_id": "test_ds",
-                    "name": "Test Dataset",
-                    "description": "Test description",
-                    "source_databases": ["GO", "PubMed"],
+        mock_pydantic_agent.run = AsyncMock(
+            return_value=SimpleNamespace(
+                data={
+                    "fused_dataset": {
+                        "dataset_id": "test_ds",
+                        "name": "Test Dataset",
+                        "description": "Test description",
+                        "source_databases": ["GO", "PubMed"],
+                    }
                 }
-            }
-            mock_pydantic_agent.run.return_value = mock_result
+            )
+        )
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
+            agent = BioinformaticsAgent()
 
             fusion_request = DataFusionRequest(
                 request_id="req_1",
@@ -1102,7 +1117,7 @@ class TestBioinformaticsAgent:
     @pytest.mark.asyncio
     async def test_fuse_data_failure(self, mock_pydantic_agent):
         """Test data fusion failure handling."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = BioinformaticsAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Fusion failed")
@@ -1122,15 +1137,16 @@ class TestBioinformaticsAgent:
     @pytest.mark.asyncio
     async def test_perform_reasoning_success(self, mock_pydantic_agent):
         """Test successful reasoning operation."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        mock_pydantic_agent.run = AsyncMock(
+            return_value=SimpleNamespace(
+                data={
+                    "reasoning_result": "test result",
+                    "confidence": 0.9,
+                }
+            )
+        )
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = BioinformaticsAgent()
-
-            mock_result = Mock(spec=AgentResult)
-            mock_result.data = {
-                "reasoning_result": "test result",
-                "confidence": 0.9,
-            }
-            mock_pydantic_agent.run.return_value = mock_result
 
             task = ReasoningTask(
                 task_id="task_1",
@@ -1154,7 +1170,7 @@ class TestBioinformaticsAgent:
     @pytest.mark.asyncio
     async def test_perform_reasoning_failure(self, mock_pydantic_agent):
         """Test reasoning failure handling."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = BioinformaticsAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Reasoning failed")
@@ -1202,16 +1218,17 @@ class TestDeepSearchAgent:
     @pytest.mark.asyncio
     async def test_deep_search_success(self, mock_pydantic_agent):
         """Test successful deep search."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        mock_pydantic_agent.run = AsyncMock(
+            return_value=SimpleNamespace(
+                data={
+                    "answer": "Deep search answer",
+                    "iterations": 5,
+                    "sources": ["source1", "source2"],
+                }
+            )
+        )
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = DeepSearchAgent()
-
-            mock_result = Mock(spec=AgentResult)
-            mock_result.data = {
-                "answer": "Deep search answer",
-                "iterations": 5,
-                "sources": ["source1", "source2"],
-            }
-            mock_pydantic_agent.run.return_value = mock_result
 
             result = await agent.deep_search("test question", max_steps=20)
 
@@ -1221,22 +1238,22 @@ class TestDeepSearchAgent:
     @pytest.mark.asyncio
     async def test_deep_search_with_custom_steps(self, mock_pydantic_agent):
         """Test deep search with custom max steps."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        run_mock = AsyncMock(
+            return_value=SimpleNamespace(data={"answer": "test", "iterations": 10})
+        )
+        mock_pydantic_agent.run = run_mock
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = DeepSearchAgent()
-
-            mock_result = Mock(spec=AgentResult)
-            mock_result.data = {"answer": "test", "iterations": 10}
-            mock_pydantic_agent.run.return_value = mock_result
 
             _ = await agent.deep_search("question", max_steps=10)
 
             # Verify execution was called with correct params
-            mock_pydantic_agent.run.assert_called_once()
+            run_mock.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_deep_search_failure(self, mock_pydantic_agent):
         """Test deep search failure handling."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = DeepSearchAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Deep search failed")
@@ -1271,17 +1288,18 @@ class TestEvaluatorAgent:
     @pytest.mark.asyncio
     async def test_evaluate_success(self, mock_pydantic_agent):
         """Test successful evaluation."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        mock_pydantic_agent.run = AsyncMock(
+            return_value=SimpleNamespace(
+                data={
+                    "quality_score": 0.85,
+                    "completeness": 0.9,
+                    "accuracy": 0.8,
+                    "feedback": "Good answer",
+                }
+            )
+        )
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = EvaluatorAgent()
-
-            mock_result = Mock(spec=AgentResult)
-            mock_result.data = {
-                "quality_score": 0.85,
-                "completeness": 0.9,
-                "accuracy": 0.8,
-                "feedback": "Good answer",
-            }
-            mock_pydantic_agent.run.return_value = mock_result
 
             result = await agent.evaluate(
                 "What is AI?", "AI is artificial intelligence"
@@ -1293,17 +1311,18 @@ class TestEvaluatorAgent:
     @pytest.mark.asyncio
     async def test_evaluate_poor_answer(self, mock_pydantic_agent):
         """Test evaluation of poor answer."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        mock_pydantic_agent.run = AsyncMock(
+            return_value=SimpleNamespace(
+                data={
+                    "quality_score": 0.3,
+                    "completeness": 0.2,
+                    "accuracy": 0.4,
+                    "feedback": "Needs improvement",
+                }
+            )
+        )
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = EvaluatorAgent()
-
-            mock_result = Mock(spec=AgentResult)
-            mock_result.data = {
-                "quality_score": 0.3,
-                "completeness": 0.2,
-                "accuracy": 0.4,
-                "feedback": "Needs improvement",
-            }
-            mock_pydantic_agent.run.return_value = mock_result
 
             result = await agent.evaluate("Complex question", "Short answer")
 
@@ -1312,7 +1331,7 @@ class TestEvaluatorAgent:
     @pytest.mark.asyncio
     async def test_evaluate_failure(self, mock_pydantic_agent):
         """Test evaluation failure handling."""
-        with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+        with _patch_pydantic_agent_class(mock_pydantic_agent):
             agent = EvaluatorAgent()
 
             mock_pydantic_agent.run.side_effect = Exception("Evaluation failed")
@@ -1563,7 +1582,7 @@ def test_agent_creation():
 #     @pytest.mark.asyncio
 #     async def test_search_rag_workflow(self, mock_pydantic_agent):
 #         """Test workflow from search to RAG."""
-#         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+#         with _patch_pydantic_agent_class(mock_pydantic_agent):
 #             # Search
 #             search_agent = SearchAgent()
 #             mock_pydantic_agent.run.return_value = Mock(
@@ -1592,7 +1611,7 @@ def test_agent_creation():
 #     @pytest.mark.asyncio
 #     async def test_agent_error_propagation(self, mock_pydantic_agent):
 #         """Test error propagation through agent chain."""
-#         with patch("DeepResearch.agents.Agent", return_value=mock_pydantic_agent):
+#         with _patch_pydantic_agent_class(mock_pydantic_agent):
 #             # Parser fails
 #             parser = ParserAgent()
 #             mock_pydantic_agent.run.side_effect = Exception("Parser error")

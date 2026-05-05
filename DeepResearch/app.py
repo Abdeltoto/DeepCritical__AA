@@ -1458,6 +1458,7 @@ def run_graph(question: str, cfg: DictConfig) -> str:
         BioinformaticsFuse(),
         LiteratureReviewRun(),
         HypothesisRun(),
+        WorkflowPatternRun(),
         RAGParse(),
         RAGExecute(),
         PrimaryREACTWorkflow(),
