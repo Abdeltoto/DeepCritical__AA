@@ -240,6 +240,10 @@ def list_registered_tools() -> list[str]:
     return canonical_registry.list_tools()
 
 
-# ``from DeepResearch.src.tools import registry`` resolves to this submodule when
-# present; tests and callers expect ``registry.list()`` at module level.
-list = list_registered_tools
+def __getattr__(name: str) -> Any:
+    # Expose ``registry.list()`` without assigning ``list = ...``, which would shadow
+    # the builtin and break ``list[str]`` annotations in this module for type checkers.
+    if name == "list":
+        return list_registered_tools
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
