@@ -34,7 +34,7 @@ switch ($TestType) {
     }
     "unit" {
         Write-Host "Running unit tests..."
-        uv run pytest tests/ -m "unit" -v
+        uv run pytest tests/ -m "not integration" -v
     }
     "integration" {
         Write-Host "Running integration tests..."

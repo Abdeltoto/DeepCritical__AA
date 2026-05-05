@@ -381,7 +381,9 @@ class VLLMDeployment(BaseModel):
         """Check if a server is healthy."""
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=5) as response:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
                     return response.status == 200
         except Exception:
             return False

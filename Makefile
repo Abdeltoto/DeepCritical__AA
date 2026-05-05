@@ -1,4 +1,4 @@
-.PHONY: help install dev-install test test-cov lint format type-check quality clean build docs
+.PHONY: help install dev-install test test-cov test-unit test-integration test-containerized test-performance test-core lint format type-check quality clean build docs
 
 # Default target
 help:
@@ -20,6 +20,11 @@ help:
 	@echo "  test-main-cov Run all tests including optional with coverage (for main branch)"
 	@echo "  test-optional Run only optional tests"
 	@echo "  test-optional-cov Run only optional tests with coverage"
+	@echo "  test-unit    Run non-integration tests (merges with pytest.ini markers)"
+	@echo "  test-integration Run integration-marked tests (merges with pytest.ini markers)"
+	@echo "  test-containerized Run containerized-marked tests (CI / main)"
+	@echo "  test-performance Run performance tests (benchmarks if PERFORMANCE_TESTS=true)"
+	@echo "  test-core    Default test selection (for cross-platform matrix CI)"
 	@echo "  test-*-pytest  Alternative pytest-only versions (for CI without uv)"
 ifeq ($(OS),Windows_NT)
 	@echo "  test-unit-win       Run unit tests (Windows)"
@@ -112,6 +117,27 @@ test-optional:
 
 test-optional-cov:
 	uv run pytest tests/ -m "optional" --cov=DeepResearch --cov-report=html --cov-report=term
+
+# Split targets for .github/workflows/test-enhanced.yml (expressions merge with addopts in pytest.ini)
+test-unit:
+	uv run pytest tests/ -m "not integration" -v
+
+test-integration:
+	uv run pytest tests/ -m "integration" -v
+
+test-containerized:
+	uv run pytest tests/ -m "containerized and not optional and not vllm" -v --tb=short \
+		--override-ini="addopts=-ra -q"
+
+test-performance:
+	@if [ "$${PERFORMANCE_TESTS:-false}" = "true" ]; then \
+		uv run pytest tests/ -m performance --benchmark-only --benchmark-json=benchmark.json -v; \
+	else \
+		uv run pytest tests/test_performance/ -v --tb=short; \
+	fi
+
+test-core:
+	uv run pytest tests/ -v
 
 # Alternative pytest-only versions (for CI environments without uv)
 test-dev-pytest:
