@@ -60,14 +60,29 @@ def _hypothesis_generation_return_payload(
     meta: dict[str, Any],
     judge_payload: dict[str, Any] | None,
     run_quality_judge: bool,
+    fail_on_judge_failure: bool = False,
 ) -> dict[str, Any]:
-    """Shared response shape for hypothesis pipelines (primary tool + spawned workflow)."""
+    """Shared response shape for hypothesis pipelines (primary tool + spawned workflow).
+
+    When ``run_quality_judge`` is True and ``fail_on_judge_failure`` is True,
+    ``success`` is False if the judge fails or returns no result.
+    """
     answer_lines: list[str] = []
     for i, row in enumerate(dataset.hypotheses, start=1):
         stmt = row.get("statement") if isinstance(row, dict) else None
         answer_lines.append(f"{i}. {stmt or row!s}")
+    pipeline_success = True
+    judge_ok: bool | None = None
+    if run_quality_judge:
+        if judge_payload is None:
+            judge_ok = False
+        else:
+            judge_ok = bool(judge_payload.get("success"))
+        if fail_on_judge_failure and judge_ok is not True:
+            pipeline_success = False
+
     out: dict[str, Any] = {
-        "success": True,
+        "success": pipeline_success,
         "hypothesis_dataset": dataset.model_dump(),
         "hypotheses": dataset.hypotheses,
         "answer": "\n".join(answer_lines),
@@ -370,6 +385,7 @@ class PrimaryWorkflowOrchestrator:
                 meta=meta,
                 judge_payload=judge_payload,
                 run_quality_judge=bool(merged.get("run_quality_judge")),
+                fail_on_judge_failure=bool(merged.get("fail_on_judge_failure")),
             )
 
         @self.primary_agent.tool

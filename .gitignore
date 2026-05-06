@@ -94,3 +94,8 @@ Thumbs.db
 
 # MkDocs site
 site/
+
+# Local hypothesis CLI / TUI artifacts
+tui/node_modules/
+tui/.env
+hypothesis_runs/

@@ -66,6 +66,16 @@ repos:
     hooks:
       - id: check-added-large-files
 
+  # Optional Bun typecheck for OpenTUI demo (skipped when bun is absent)
+  - repo: local
+    hooks:
+      - id: tui-typecheck
+        name: TUI typecheck (optional bun)
+        entry: uv run python scripts/pre_commit_tui_typecheck.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # Documentation build check
   - repo: local
     hooks:
