@@ -227,8 +227,8 @@ e245158 fix: resolve invalid-assignment type errors (6/204)
 ## Verification Commands
 
 ```bash
-# Check remaining type errors
-uvx ty check DeepResearch 2>&1 | grep "error\[" | wc -l
+# Check remaining type errors (uses the project-pinned `ty` version from the dev group)
+uv run ty check DeepResearch 2>&1 | grep "error\[" | wc -l
 # Output: 83
 
 # Run type check
