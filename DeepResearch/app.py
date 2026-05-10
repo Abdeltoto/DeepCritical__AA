@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
 
 from .agents import ExecutionHistory, ExecutorAgent, ParserAgent, PlannerAgent
@@ -334,22 +334,27 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
             WorkflowConfig,
         )
 
+        orchestration_cfg = self._to_plain_config(orchestration_cfg)
+        primary_data = self._mapping_section(orchestration_cfg, "primary_workflow")
+
         # Create primary workflow config
         primary_workflow = WorkflowConfig(
-            workflow_type=WorkflowType.PRIMARY_REACT,
-            name="main_research_workflow",
-            enabled=True,
-            priority=10,
-            max_retries=3,
-            timeout=300.0,
-            parameters=orchestration_cfg.get("primary_workflow", {}).get(
-                "parameters", {}
+            workflow_type=WorkflowType(
+                primary_data.get("workflow_type", WorkflowType.PRIMARY_REACT.value)
             ),
+            name=primary_data.get("name", "main_research_workflow"),
+            enabled=primary_data.get("enabled", True),
+            priority=primary_data.get("priority", 10),
+            max_retries=primary_data.get("max_retries", 3),
+            timeout=primary_data.get("timeout", 300.0),
+            dependencies=primary_data.get("dependencies", []),
+            parameters=primary_data.get("parameters", {}),
+            output_format=primary_data.get("output_format", "default"),
         )
 
         # Create sub-workflow configs
         sub_workflows = []
-        for workflow_data in orchestration_cfg.get("sub_workflows", []):
+        for workflow_data in self._list_section(orchestration_cfg, "sub_workflows"):
             workflow_config = WorkflowConfig(
                 workflow_type=WorkflowType(
                     workflow_data.get("workflow_type", "rag_workflow")
@@ -359,13 +364,15 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
                 priority=workflow_data.get("priority", 0),
                 max_retries=workflow_data.get("max_retries", 3),
                 timeout=workflow_data.get("timeout", 120.0),
+                dependencies=workflow_data.get("dependencies", []),
                 parameters=workflow_data.get("parameters", {}),
+                output_format=workflow_data.get("output_format", "default"),
             )
             sub_workflows.append(workflow_config)
 
         # Create data loader configs
         data_loaders = []
-        for loader_data in orchestration_cfg.get("data_loaders", []):
+        for loader_data in self._list_section(orchestration_cfg, "data_loaders"):
             loader_config = DataLoaderConfig(
                 loader_type=DataLoaderType(
                     loader_data.get("loader_type", "document_loader")
@@ -383,7 +390,7 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
 
         # Create multi-agent system configs
         multi_agent_systems = []
-        for system_data in orchestration_cfg.get("multi_agent_systems", []):
+        for system_data in self._list_section(orchestration_cfg, "multi_agent_systems"):
             agents = []
             for agent_data in system_data.get("agents", []):
                 from .src.datatypes.workflow_orchestration import AgentConfig
@@ -429,7 +436,7 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
 
         # Create judge configs
         judges = []
-        for judge_data in orchestration_cfg.get("judges", []):
+        for judge_data in self._list_section(orchestration_cfg, "judges"):
             judge_config = JudgeConfig(
                 judge_id=judge_data.get("judge_id", "unnamed_judge"),
                 name=judge_data.get("name", "Unnamed Judge"),
@@ -457,6 +464,40 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
             enable_monitoring=orchestration_cfg.get("enable_monitoring", True),
             enable_caching=orchestration_cfg.get("enable_caching", True),
         )
+
+    def _to_plain_config(self, value: Any) -> dict[str, Any]:
+        """Convert Hydra/OmegaConf config to a plain dictionary."""
+        if value is None:
+            return {}
+        if isinstance(value, DictConfig):
+            plain = OmegaConf.to_container(value, resolve=True)
+            return plain if isinstance(plain, dict) else {}
+        if isinstance(value, dict):
+            return dict(value)
+        return {}
+
+    def _mapping_section(self, cfg: dict[str, Any], key: str) -> dict[str, Any]:
+        """Return a mapping section, unwrapping Hydra group nesting when present."""
+        section = cfg.get(key, {})
+        if isinstance(section, DictConfig):
+            section = OmegaConf.to_container(section, resolve=True)
+        if isinstance(section, dict):
+            nested = section.get(key)
+            if isinstance(nested, dict):
+                return nested
+            return section
+        return {}
+
+    def _list_section(self, cfg: dict[str, Any], key: str) -> list[dict[str, Any]]:
+        """Return a list section, supporting Hydra group nesting."""
+        section = cfg.get(key, [])
+        if isinstance(section, DictConfig):
+            section = OmegaConf.to_container(section, resolve=True)
+        if isinstance(section, dict):
+            section = section.get(key, [])
+        if not isinstance(section, list):
+            return []
+        return [item for item in section if isinstance(item, dict)]
 
     def _generate_comprehensive_output(
         self,

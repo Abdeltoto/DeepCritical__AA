@@ -11,10 +11,12 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
+from omegaconf import DictConfig
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import AgentRunError
 
@@ -32,11 +34,14 @@ from DeepResearch.src.datatypes.workflow_orchestration import (
     MultiAgentCoordinationResult,
     OrchestrationState,
     OrchestratorDependencies,
+    WorkflowAdapterResult,
     WorkflowComposition,
     WorkflowConfig,
     WorkflowExecution,
     WorkflowOrchestrationConfig,
+    WorkflowPlan,
     WorkflowResult,
+    WorkflowRunContext,
     WorkflowSpawnRequest,
     WorkflowSpawnResult,
     WorkflowStatus,
@@ -47,11 +52,6 @@ from DeepResearch.src.tools.registry import canonical_registry
 from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from omegaconf import DictConfig
 
 
 def _hypothesis_generation_return_payload(
@@ -105,15 +105,66 @@ def _hypothesis_generation_return_payload(
     return out
 
 
+class WorkflowAdapter(Protocol):
+    """Minimal adapter contract for executable workflow units."""
+
+    workflow_type: WorkflowType
+
+    async def execute(
+        self, execution: WorkflowExecution, context: WorkflowRunContext
+    ) -> WorkflowAdapterResult:
+        """Execute a workflow and return a normalized adapter result."""
+
+
+@dataclass
+class FunctionWorkflowAdapter:
+    """Adapter wrapper around the current ``_execute_*_workflow`` methods."""
+
+    workflow_type: WorkflowType
+    workflow_func: Callable[[dict[str, Any], dict[str, Any]], Awaitable[Any]]
+
+    async def execute(
+        self, execution: WorkflowExecution, context: WorkflowRunContext
+    ) -> WorkflowAdapterResult:
+        output = await self.workflow_func(
+            execution.input_data, execution.workflow_config.parameters
+        )
+        if isinstance(output, WorkflowAdapterResult):
+            return output
+        if not isinstance(output, dict):
+            output = {"result": output}
+        success = bool(output.get("success", True))
+        error_message = output.get("error") or output.get("error_message")
+        return WorkflowAdapterResult(
+            success=success,
+            output_data=output,
+            metadata={
+                "workflow_type": execution.workflow_config.workflow_type.value,
+                "workflow_name": execution.workflow_config.name,
+                "execution_mode": context.execution_mode,
+            },
+            retryable=bool(output.get("retryable", False)),
+            degraded=bool(output.get("degraded", False)),
+            error_message=str(error_message) if error_message else None,
+        )
+
+
 @dataclass
 class PrimaryWorkflowOrchestrator:
     """Primary orchestrator for workflow-of-workflows architecture."""
 
     config: WorkflowOrchestrationConfig
     state: OrchestrationState = field(default_factory=OrchestrationState)
-    workflow_registry: dict[str, Callable] = field(default_factory=dict)
+    workflow_registry: dict[str, Callable[..., Any]] = field(default_factory=dict)
+    adapter_registry: dict[str, WorkflowAdapter] = field(default_factory=dict)
     agent_registry: dict[str, Any] = field(default_factory=dict)
     judge_registry: dict[str, Any] = field(default_factory=dict)
+    _tasks_by_execution_id: dict[str, asyncio.Task[Any]] = field(
+        default_factory=dict, init=False
+    )
+    _executions_by_id: dict[str, WorkflowExecution] = field(
+        default_factory=dict, init=False
+    )
 
     def __post_init__(self):
         """Initialize the orchestrator with workflows, agents, and judges."""
@@ -135,6 +186,13 @@ class PrimaryWorkflowOrchestrator:
             "reasoning_workflow": self._execute_reasoning_workflow,
             "code_execution_workflow": self._execute_code_execution_workflow,
             "evaluation_workflow": self._execute_evaluation_workflow,
+        }
+        self.adapter_registry = {
+            workflow_type: FunctionWorkflowAdapter(
+                workflow_type=WorkflowType(workflow_type),
+                workflow_func=workflow_func,
+            )
+            for workflow_type, workflow_func in self.workflow_registry.items()
         }
 
     def _register_agents(self):
@@ -411,8 +469,7 @@ class PrimaryWorkflowOrchestrator:
     ) -> dict[str, Any]:
         """Execute the primary REACT workflow."""
         start_ts = time.perf_counter()
-        cfg_raw = dict(config) if config else {}
-        cfg_dict: dict[str, Any] = {str(k): v for k, v in cfg_raw.items()}
+        cfg_dict = self._config_to_dict(config)
         configured_ids = list(self.agent_registry.get("configured_agent_ids", []))
         system_ids = list(self.agent_registry.get("multi_agent_system_ids", []))
         agent_hints = configured_ids + [
@@ -427,42 +484,48 @@ class PrimaryWorkflowOrchestrator:
             available_judges=list(self.judge_registry.keys()),
         )
 
+        run_result: Any = None
         try:
-            run_result = await self.primary_agent.run(user_input, deps=deps)
-        except AgentRunError as e:
-            elapsed = time.perf_counter() - start_ts
-            return {
-                "success": False,
-                "error": str(e),
-                "result": {"output": None, "usage": None},
-                "state": self.state,
-                "execution_metadata": {
-                    "workflows_spawned": len(self.state.active_executions),
-                    "total_executions": len(self.state.completed_executions),
-                    "elapsed_seconds": elapsed,
-                    "failure_kind": "agent_run_error",
-                },
-            }
-        except Exception as e:
-            elapsed = time.perf_counter() - start_ts
-            logger.exception("Primary workflow agent.run failed")
-            return {
-                "success": False,
-                "error": str(e),
-                "result": {"output": None, "usage": None},
-                "state": self.state,
-                "execution_metadata": {
-                    "workflows_spawned": len(self.state.active_executions),
-                    "total_executions": len(self.state.completed_executions),
-                    "elapsed_seconds": elapsed,
-                    "failure_kind": "unexpected_error",
-                },
-            }
-
-        self.state.last_updated = datetime.now()
-        self.state.system_metrics["total_executions"] = len(
-            self.state.completed_executions
-        )
+            try:
+                run_result = await self.primary_agent.run(user_input, deps=deps)
+            except AgentRunError as e:
+                elapsed = time.perf_counter() - start_ts
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "result": {"output": None, "usage": None},
+                    "state": self.state,
+                    "execution_metadata": {
+                        "workflows_spawned": len(self.state.active_executions),
+                        "total_executions": len(self.state.completed_executions),
+                        "elapsed_seconds": elapsed,
+                        "failure_kind": "agent_run_error",
+                    },
+                }
+            except Exception as e:
+                elapsed = time.perf_counter() - start_ts
+                logger.exception("Primary workflow agent.run failed")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "result": {"output": None, "usage": None},
+                    "state": self.state,
+                    "execution_metadata": {
+                        "workflows_spawned": len(self.state.active_executions),
+                        "total_executions": len(self.state.completed_executions),
+                        "elapsed_seconds": elapsed,
+                        "failure_kind": "unexpected_error",
+                    },
+                }
+        finally:
+            await self._drain_workflows()
+            self.state.last_updated = datetime.now()
+            self.state.system_metrics["total_executions"] = len(
+                self.state.completed_executions
+            )
+            self.state.system_metrics["active_executions"] = len(
+                self.state.active_executions
+            )
 
         out = getattr(run_result, "output", None)
         usage = getattr(run_result, "usage", None)
@@ -484,25 +547,198 @@ class PrimaryWorkflowOrchestrator:
             },
         }
 
+    async def execute_workflow_plan(
+        self,
+        plan: WorkflowPlan | WorkflowComposition,
+        input_data: dict[str, Any] | None = None,
+        root_config: dict[str, Any] | None = None,
+        execution_mode: str = "production",
+    ) -> dict[str, Any]:
+        """Execute a deterministic workflow composition without LLM tool calls."""
+        start_time = time.monotonic()
+        input_payload = dict(input_data or {})
+        workflow_names = self._plan_workflow_names(plan)
+        dependency_map = self._plan_dependency_map(plan, workflow_names)
+        batches = self._topological_batches(workflow_names, dependency_map)
+        dependency_outputs: dict[str, dict[str, Any]] = {}
+        strategy = (
+            getattr(plan, "execution_strategy", None) or self.config.execution_strategy
+        )
+        max_parallel = max(1, self.config.max_concurrent_workflows)
+
+        for batch in batches:
+            ordered_batch = sorted(
+                batch,
+                key=lambda n: self._get_workflow_config_by_name_or_type(n).priority,
+                reverse=True,
+            )
+            workflow_chunks = (
+                [[workflow_name] for workflow_name in ordered_batch]
+                if strategy == "sequential"
+                else [
+                    ordered_batch[index : index + max_parallel]
+                    for index in range(0, len(ordered_batch), max_parallel)
+                ]
+            )
+            for workflow_chunk in workflow_chunks:
+                batch_tasks: list[tuple[str, WorkflowExecution, asyncio.Task[Any]]] = []
+                for workflow_name in workflow_chunk:
+                    dependencies = dependency_map.get(workflow_name, [])
+                    workflow_config = self._copy_workflow_config(
+                        self._get_workflow_config_by_name_or_type(workflow_name),
+                        {"dependencies": dependencies},
+                    )
+                    missing_dependencies = [
+                        dep for dep in dependencies if dep not in dependency_outputs
+                    ]
+                    if missing_dependencies:
+                        self._record_skipped_execution(
+                            workflow_config,
+                            "Skipped because dependencies did not complete "
+                            f"successfully: {missing_dependencies}",
+                        )
+                        continue
+
+                    dependency_payload = {
+                        dep: dependency_outputs[dep] for dep in dependencies
+                    }
+                    execution = WorkflowExecution(
+                        workflow_config=workflow_config,
+                        input_data={
+                            **input_payload,
+                            "dependency_outputs": dependency_payload,
+                        },
+                        status=WorkflowStatus.PENDING,
+                    )
+                    context = WorkflowRunContext(
+                        user_input=getattr(plan, "user_input", "") or "",
+                        root_config=dict(root_config or {}),
+                        dependency_outputs=dependency_payload,
+                        execution_mode=execution_mode,
+                    )
+                    task = self._start_execution(execution, context)
+                    batch_tasks.append((workflow_name, execution, task))
+
+                if not batch_tasks:
+                    continue
+                await asyncio.gather(
+                    *(task for _, _, task in batch_tasks), return_exceptions=True
+                )
+                self._clear_finished_tasks()
+                for workflow_name, execution, _task in batch_tasks:
+                    result = self._completed_result_for(execution.execution_id)
+                    if result and result.status == WorkflowStatus.COMPLETED:
+                        dependency_outputs[workflow_name] = result.output_data
+
+        self.state.last_updated = datetime.now()
+        self.state.system_metrics["total_executions"] = len(
+            self.state.completed_executions
+        )
+        self.state.system_metrics["active_executions"] = len(
+            self.state.active_executions
+        )
+        failed = [
+            result
+            for result in self.state.completed_executions
+            if result.status != WorkflowStatus.COMPLETED
+        ]
+        return {
+            "success": not failed,
+            "state": self.state,
+            "completed_executions": self.state.completed_executions,
+            "execution_metadata": {
+                "total_executions": len(self.state.completed_executions),
+                "failed_executions": len(failed),
+                "execution_time": time.monotonic() - start_time,
+            },
+        }
+
+    def compose_workflow_plan(
+        self,
+        user_input: str,
+        selected_workflows: list[str] | None = None,
+        execution_strategy: str | None = None,
+    ) -> WorkflowPlan:
+        """Create a deterministic plan from selected or configured workflows."""
+        workflow_names = selected_workflows or [
+            workflow.name for workflow in self.config.sub_workflows if workflow.enabled
+        ]
+        dependencies = {
+            workflow.name: list(workflow.dependencies)
+            for workflow in self.config.sub_workflows
+            if workflow.name in workflow_names and workflow.dependencies
+        }
+        return WorkflowPlan(
+            user_input=user_input,
+            workflow_names=workflow_names,
+            workflow_dependencies=dependencies,
+            execution_strategy=execution_strategy or self.config.execution_strategy,
+            expected_outputs={
+                workflow.name: workflow.output_format
+                for workflow in self.config.sub_workflows
+                if workflow.name in workflow_names
+            },
+        )
+
+    def _config_to_dict(self, config: Any) -> dict[str, Any]:
+        """Convert DictConfig or mapping-like config into a plain dict."""
+        if config is None:
+            return {}
+        try:
+            from omegaconf import OmegaConf
+
+            if isinstance(config, DictConfig):
+                data = OmegaConf.to_container(config, resolve=True)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            pass
+        if isinstance(config, dict):
+            return dict(config)
+        return {}
+
+    def _copy_workflow_config(
+        self, workflow_config: WorkflowConfig, update: dict[str, Any]
+    ) -> WorkflowConfig:
+        """Copy a workflow config across Pydantic versions."""
+        model_copy = getattr(workflow_config, "model_copy", None)
+        if callable(model_copy):
+            return model_copy(update=update)
+        return workflow_config.copy(update=update)
+
     def _spawn_workflow(self, request: WorkflowSpawnRequest) -> WorkflowSpawnResult:
         """Spawn a new workflow execution."""
         try:
-            # Create workflow execution
+            workflow_config = self._get_workflow_config(
+                request.workflow_type, request.workflow_name
+            )
+            params = request.parameters or {}
+            if request.parameters or request.dependencies:
+                workflow_config = self._copy_workflow_config(
+                    workflow_config,
+                    {
+                        "parameters": {**workflow_config.parameters, **params},
+                        "dependencies": request.dependencies
+                        or workflow_config.dependencies,
+                    },
+                )
             execution = WorkflowExecution(
-                workflow_config=self._get_workflow_config(
-                    request.workflow_type, request.workflow_name
-                ),
+                workflow_config=workflow_config,
                 input_data=request.input_data,
                 status=WorkflowStatus.PENDING,
             )
 
-            # Add to active executions
-            self.state.active_executions.append(execution)
+            context = WorkflowRunContext(
+                user_input=str(
+                    request.input_data.get("question")
+                    or request.input_data.get("query")
+                    or ""
+                ),
+                dependency_outputs={},
+                execution_mode=str(params.get("execution_mode", "production")),
+            )
+            task = self._start_execution(execution, context)
 
-            # Fire-and-forget: surface failures via logs (spawn already returned success).
-            task = asyncio.create_task(self._execute_workflow_async(execution))
-
-            def _log_task_failure(t: asyncio.Task) -> None:
+            def _log_task_failure(t: asyncio.Task[Any]) -> None:
                 try:
                     t.result()
                 except asyncio.CancelledError:
@@ -530,32 +766,139 @@ class PrimaryWorkflowOrchestrator:
                 error_message=str(e),
             )
 
-    async def _execute_workflow_async(self, execution: WorkflowExecution):
+    async def _execute_workflow_async(self, execution: WorkflowExecution) -> None:
         """Execute a workflow asynchronously."""
-        # Get workflow function
-        workflow_func = self.workflow_registry.get(
-            execution.workflow_config.workflow_type.value
-        )
-        if not workflow_func:
+        context = WorkflowRunContext()
+        await self._execute_workflow_task(execution, context)
+
+    async def _execute_workflow_task(
+        self, execution: WorkflowExecution, context: WorkflowRunContext
+    ) -> None:
+        """Execute a workflow task and record exactly one terminal result."""
+        workflow_result: WorkflowResult
+        try:
+            workflow_result = await self._run_execution_with_retries(execution, context)
+        except asyncio.CancelledError:
+            execution.status = WorkflowStatus.CANCELLED
+            execution.end_time = datetime.now()
+            workflow_result = WorkflowResult(
+                execution_id=execution.execution_id,
+                workflow_name=execution.workflow_config.name,
+                status=WorkflowStatus.CANCELLED,
+                output_data={},
+                execution_time=execution.duration or 0.0,
+                error_details={"error": "Workflow execution cancelled"},
+            )
+            self._finish_execution(execution, workflow_result)
+            raise
+        except Exception as e:
+            execution.status = WorkflowStatus.FAILED
+            execution.end_time = datetime.now()
+            execution.error_message = str(e)
             workflow_result = WorkflowResult(
                 execution_id=execution.execution_id,
                 workflow_name=execution.workflow_config.name,
                 status=WorkflowStatus.FAILED,
                 output_data={},
-                execution_time=0.0,
-                error_details={
-                    "error": f"Unknown workflow type: {execution.workflow_config.workflow_type}"
-                },
+                execution_time=execution.duration or 0.0,
+                error_details={"error": str(e)},
             )
-        else:
-            timeout_s = getattr(execution.workflow_config, "timeout", None)
-            workflow_result = await self._supervisor.run_workflow(
-                execution, workflow_func, timeout_s=timeout_s
+        self._finish_execution(execution, workflow_result)
+
+    async def _run_execution_with_retries(
+        self, execution: WorkflowExecution, context: WorkflowRunContext
+    ) -> WorkflowResult:
+        """Run one workflow with timeout and retry semantics."""
+        started = time.monotonic()
+        adapter = self.adapter_registry.get(
+            execution.workflow_config.workflow_type.value
+        )
+        if adapter is None:
+            execution.status = WorkflowStatus.FAILED
+            execution.end_time = datetime.now()
+            execution.error_message = (
+                f"Unknown workflow type: {execution.workflow_config.workflow_type}"
+            )
+            return WorkflowResult(
+                execution_id=execution.execution_id,
+                workflow_name=execution.workflow_config.name,
+                status=WorkflowStatus.FAILED,
+                output_data={},
+                execution_time=time.monotonic() - started,
+                error_details={"error": execution.error_message},
+            )
+        if not execution.workflow_config.enabled:
+            execution.status = WorkflowStatus.CANCELLED
+            execution.end_time = datetime.now()
+            execution.error_message = "Workflow is disabled"
+            return WorkflowResult(
+                execution_id=execution.execution_id,
+                workflow_name=execution.workflow_config.name,
+                status=WorkflowStatus.CANCELLED,
+                output_data={},
+                execution_time=time.monotonic() - started,
+                error_details={"error": execution.error_message},
             )
 
-        if execution in self.state.active_executions:
-            self.state.active_executions.remove(execution)
-        self.state.completed_executions.append(workflow_result)
+        max_attempts = max(1, execution.workflow_config.max_retries + 1)
+        last_error: str | None = None
+        for attempt_index in range(max_attempts):
+            execution.retry_count = attempt_index
+            execution.status = WorkflowStatus.RUNNING
+            if execution.start_time is None:
+                execution.start_time = datetime.now()
+            try:
+                coro = adapter.execute(execution, context)
+                if execution.workflow_config.timeout:
+                    adapter_result = await asyncio.wait_for(
+                        coro, timeout=execution.workflow_config.timeout
+                    )
+                else:
+                    adapter_result = await coro
+            except TimeoutError:
+                last_error = "Workflow execution timed out"
+                if attempt_index + 1 < max_attempts:
+                    continue
+                break
+            except Exception as e:
+                last_error = str(e)
+                if attempt_index + 1 < max_attempts:
+                    continue
+                break
+
+            if adapter_result.success:
+                execution.status = WorkflowStatus.COMPLETED
+                execution.end_time = datetime.now()
+                execution.output_data = adapter_result.output_data
+                return WorkflowResult(
+                    execution_id=execution.execution_id,
+                    workflow_name=execution.workflow_config.name,
+                    status=WorkflowStatus.COMPLETED,
+                    output_data=adapter_result.output_data,
+                    metadata={
+                        **adapter_result.metadata,
+                        "attempts": attempt_index + 1,
+                        "degraded": adapter_result.degraded,
+                    },
+                    execution_time=time.monotonic() - started,
+                )
+
+            last_error = adapter_result.error_message or "Workflow adapter failed"
+            if not adapter_result.retryable or attempt_index + 1 >= max_attempts:
+                break
+
+        execution.status = WorkflowStatus.FAILED
+        execution.end_time = datetime.now()
+        execution.error_message = last_error or "Workflow execution failed"
+        return WorkflowResult(
+            execution_id=execution.execution_id,
+            workflow_name=execution.workflow_config.name,
+            status=WorkflowStatus.FAILED,
+            output_data={},
+            metadata={"attempts": execution.retry_count + 1},
+            execution_time=time.monotonic() - started,
+            error_details={"error": execution.error_message},
+        )
 
     def _get_workflow_config(self, workflow_type: WorkflowType, workflow_name: str):
         """Get workflow configuration."""
@@ -571,6 +914,159 @@ class PrimaryWorkflowOrchestrator:
         return WorkflowConfig(
             workflow_type=workflow_type, name=workflow_name, enabled=True
         )
+
+    def _get_workflow_config_by_name_or_type(
+        self, workflow_name: str
+    ) -> WorkflowConfig:
+        """Resolve workflow config by configured name or workflow type value."""
+        for workflow_config in self.config.sub_workflows:
+            if workflow_name in {
+                workflow_config.name,
+                workflow_config.workflow_type.value,
+            }:
+                return workflow_config
+        try:
+            workflow_type = WorkflowType(workflow_name)
+        except ValueError as e:
+            known = [workflow.name for workflow in self.config.sub_workflows] + list(
+                self.workflow_registry.keys()
+            )
+            raise ValueError(
+                f"Unknown workflow {workflow_name!r}. Known workflows: {known}"
+            ) from e
+        return WorkflowConfig(workflow_type=workflow_type, name=workflow_name)
+
+    def _start_execution(
+        self, execution: WorkflowExecution, context: WorkflowRunContext
+    ) -> asyncio.Task[Any]:
+        """Register and start an execution task owned by this orchestrator."""
+        self.state.active_executions.append(execution)
+        self._executions_by_id[execution.execution_id] = execution
+        task = asyncio.create_task(self._execute_workflow_task(execution, context))
+        self._tasks_by_execution_id[execution.execution_id] = task
+        return task
+
+    async def _drain_workflows(self) -> None:
+        """Wait for all spawned tasks, cancelling them on global timeout."""
+        pending = [
+            task for task in self._tasks_by_execution_id.values() if not task.done()
+        ]
+        if not pending:
+            self._clear_finished_tasks()
+            return
+        gather = asyncio.gather(*pending, return_exceptions=True)
+        try:
+            if self.config.global_timeout:
+                await asyncio.wait_for(gather, timeout=self.config.global_timeout)
+            else:
+                await gather
+        except TimeoutError:
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        finally:
+            self._clear_finished_tasks()
+
+    def _finish_execution(
+        self, execution: WorkflowExecution, workflow_result: WorkflowResult
+    ) -> None:
+        """Move an execution from active state to terminal results once."""
+        if execution in self.state.active_executions:
+            self.state.active_executions.remove(execution)
+        self._executions_by_id.pop(execution.execution_id, None)
+        if not self._completed_result_for(workflow_result.execution_id):
+            self.state.completed_executions.append(workflow_result)
+
+    def _record_skipped_execution(
+        self, workflow_config: WorkflowConfig, reason: str
+    ) -> WorkflowExecution:
+        """Record a workflow that cannot run because its prerequisites failed."""
+        now = datetime.now()
+        execution = WorkflowExecution(
+            workflow_config=workflow_config,
+            status=WorkflowStatus.CANCELLED,
+            start_time=now,
+            end_time=now,
+            error_message=reason,
+        )
+        workflow_result = WorkflowResult(
+            execution_id=execution.execution_id,
+            workflow_name=workflow_config.name,
+            status=WorkflowStatus.CANCELLED,
+            output_data={},
+            execution_time=0.0,
+            error_details={"error": reason},
+        )
+        self._finish_execution(execution, workflow_result)
+        return execution
+
+    def _completed_result_for(self, execution_id: str) -> WorkflowResult | None:
+        """Return a completed result by execution id."""
+        for result in self.state.completed_executions:
+            if result.execution_id == execution_id:
+                return result
+        return None
+
+    def _clear_finished_tasks(self) -> None:
+        """Drop task handles that have reached a terminal state."""
+        for execution_id, task in list(self._tasks_by_execution_id.items()):
+            if task.done():
+                self._tasks_by_execution_id.pop(execution_id, None)
+
+    def _plan_workflow_names(
+        self, plan: WorkflowPlan | WorkflowComposition
+    ) -> list[str]:
+        """Extract workflow names from supported plan models."""
+        workflow_names = getattr(plan, "workflow_names", None)
+        if workflow_names is None:
+            workflow_names = getattr(plan, "selected_workflows", [])
+        return list(workflow_names)
+
+    def _plan_dependency_map(
+        self, plan: WorkflowPlan | WorkflowComposition, workflow_names: list[str]
+    ) -> dict[str, list[str]]:
+        """Merge explicit plan dependencies with configured workflow dependencies."""
+        explicit = dict(getattr(plan, "workflow_dependencies", {}) or {})
+        dependency_map: dict[str, list[str]] = {}
+        for workflow_name in workflow_names:
+            config = self._get_workflow_config_by_name_or_type(workflow_name)
+            dependency_map[workflow_name] = list(
+                explicit.get(workflow_name, config.dependencies)
+            )
+        return dependency_map
+
+    def _topological_batches(
+        self, workflow_names: list[str], dependency_map: dict[str, list[str]]
+    ) -> list[list[str]]:
+        """Return dependency-ordered workflow batches."""
+        workflow_set = set(workflow_names)
+        for workflow_name, dependencies in dependency_map.items():
+            unknown = [dep for dep in dependencies if dep not in workflow_set]
+            if unknown:
+                raise ValueError(
+                    f"Workflow {workflow_name!r} depends on unknown workflows: {unknown}"
+                )
+
+        remaining = set(workflow_names)
+        completed: set[str] = set()
+        batches: list[list[str]] = []
+        while remaining:
+            ready = sorted(
+                workflow_name
+                for workflow_name in remaining
+                if all(
+                    dep in completed for dep in dependency_map.get(workflow_name, [])
+                )
+            )
+            if not ready:
+                raise ValueError(
+                    f"Workflow dependencies contain a cycle: {dependency_map}"
+                )
+            batches.append(ready)
+            completed.update(ready)
+            remaining.difference_update(ready)
+        return batches
 
     async def _coordinate_multi_agent_system(
         self, request: MultiAgentCoordinationRequest
