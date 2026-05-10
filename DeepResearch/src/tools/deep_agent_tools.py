@@ -8,47 +8,213 @@ DeepCritical's architecture.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any, Dict, List, Optional, Sequence
+
+from pydantic import BaseModel, Field, validator
+from pydantic_ai import RunContext, Tool
+
+from ..datatypes.deep_agent_runtime import DeepAgentDeps
 
 # Note: defer decorator is not available in current pydantic-ai version
 # Import existing DeepCritical types
-from DeepResearch.src.datatypes.deep_agent_state import (
+from ..datatypes.deep_agent_state import (
     DeepAgentState,
     TaskStatus,
     create_file_info,
     create_todo,
 )
-from DeepResearch.src.datatypes.deep_agent_tools import (
-    EditFileRequest,
-    EditFileResponse,
-    ListFilesResponse,
-    ReadFileRequest,
-    ReadFileResponse,
-    TaskRequestModel,
-    TaskResponse,
-    WriteFileRequest,
-    WriteFileResponse,
-    WriteTodosRequest,
-    WriteTodosResponse,
-)
-from DeepResearch.src.datatypes.deep_agent_types import TaskRequest
-
-from .base import ExecutionResult, ToolRunner, ToolSpec
-
-if TYPE_CHECKING:
-    from pydantic_ai import RunContext
+from ..datatypes.deep_agent_types import TaskRequest
+from .base import ExecutionResult, ToolRunner, ToolSpec, registry
 
 
-# Pydantic AI tool functions
-def write_todos_tool(
-    request: WriteTodosRequest, ctx: RunContext[DeepAgentState]
+class WriteTodosRequest(BaseModel):
+    """Request for writing todos."""
+
+    todos: list[dict[str, Any]] = Field(..., description="List of todos to write")
+
+    @validator("todos")
+    def validate_todos(cls, v):
+        if not v:
+            raise ValueError("Todos list cannot be empty")
+        for todo in v:
+            if not isinstance(todo, dict):
+                raise ValueError("Each todo must be a dictionary")
+            if "content" not in todo:
+                raise ValueError("Each todo must have 'content' field")
+        return v
+
+
+class WriteTodosResponse(BaseModel):
+    """Response from writing todos."""
+
+    success: bool = Field(..., description="Whether operation succeeded")
+    todos_created: int = Field(..., description="Number of todos created")
+    message: str = Field(..., description="Response message")
+
+
+class ListFilesResponse(BaseModel):
+    """Response from listing files."""
+
+    files: list[str] = Field(..., description="List of file paths")
+    count: int = Field(..., description="Number of files")
+
+
+class ReadFileRequest(BaseModel):
+    """Request for reading a file."""
+
+    file_path: str = Field(..., description="Path to the file to read")
+    offset: int = Field(0, ge=0, description="Line offset to start reading from")
+    limit: int = Field(2000, gt=0, description="Maximum number of lines to read")
+
+    @validator("file_path")
+    def validate_file_path(cls, v):
+        if not v or not v.strip():
+            raise ValueError("File path cannot be empty")
+        return v.strip()
+
+
+class ReadFileResponse(BaseModel):
+    """Response from reading a file."""
+
+    content: str = Field(..., description="File content")
+    file_path: str = Field(..., description="File path")
+    lines_read: int = Field(..., description="Number of lines read")
+    total_lines: int = Field(..., description="Total lines in file")
+
+
+class WriteFileRequest(BaseModel):
+    """Request for writing a file."""
+
+    file_path: str = Field(..., description="Path to the file to write")
+    content: str = Field(..., description="Content to write to the file")
+
+    @validator("file_path")
+    def validate_file_path(cls, v):
+        if not v or not v.strip():
+            raise ValueError("File path cannot be empty")
+        return v.strip()
+
+
+class WriteFileResponse(BaseModel):
+    """Response from writing a file."""
+
+    success: bool = Field(..., description="Whether operation succeeded")
+    file_path: str = Field(..., description="File path")
+    bytes_written: int = Field(..., description="Number of bytes written")
+    message: str = Field(..., description="Response message")
+
+
+class EditFileRequest(BaseModel):
+    """Request for editing a file."""
+
+    file_path: str = Field(..., description="Path to the file to edit")
+    old_string: str = Field(..., description="String to replace")
+    new_string: str = Field(..., description="Replacement string")
+    replace_all: bool = Field(False, description="Whether to replace all occurrences")
+
+    @validator("file_path")
+    def validate_file_path(cls, v):
+        if not v or not v.strip():
+            raise ValueError("File path cannot be empty")
+        return v.strip()
+
+    @validator("old_string")
+    def validate_old_string(cls, v):
+        if not v:
+            raise ValueError("Old string cannot be empty")
+        return v
+
+
+class EditFileResponse(BaseModel):
+    """Response from editing a file."""
+
+    success: bool = Field(..., description="Whether operation succeeded")
+    file_path: str = Field(..., description="File path")
+    replacements_made: int = Field(..., description="Number of replacements made")
+    message: str = Field(..., description="Response message")
+
+
+class TaskRequestModel(BaseModel):
+    """Request for task execution."""
+
+    description: str = Field(..., description="Task description")
+    subagent_type: str = Field(..., description="Type of subagent to use")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Task parameters"
+    )
+
+    @validator("description")
+    def validate_description(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Task description cannot be empty")
+        return v.strip()
+
+    @validator("subagent_type")
+    def validate_subagent_type(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Subagent type cannot be empty")
+        return v.strip()
+
+
+class TaskResponse(BaseModel):
+    """Response from task execution."""
+
+    success: bool = Field(..., description="Whether task succeeded")
+    task_id: str = Field(..., description="Task identifier")
+    result: dict[str, Any] | None = Field(None, description="Task result")
+    message: str = Field(..., description="Response message")
+
+
+def _state_from_context(ctx: RunContext[DeepAgentDeps] | Any) -> DeepAgentState:
+    """Extract DeepAgentState from current deps or legacy test contexts."""
+
+    deps = getattr(ctx, "deps", None)
+    if isinstance(deps, DeepAgentDeps):
+        return deps.state
+    if hasattr(deps, "state"):
+        return deps.state
+    if hasattr(ctx, "state"):
+        return ctx.state
+    if isinstance(ctx, DeepAgentState):
+        return ctx
+    raise TypeError("DeepAgent tool context must provide deps.state or state")
+
+
+def _deps_from_context(ctx: RunContext[DeepAgentDeps] | Any) -> DeepAgentDeps:
+    deps = getattr(ctx, "deps", None)
+    if isinstance(deps, DeepAgentDeps):
+        return deps
+    return DeepAgentDeps(state=_state_from_context(ctx))
+
+
+def _state_from_params(params: dict[str, Any]) -> DeepAgentState:
+    state = params.get("state") or params.get("deep_agent_state")
+    if isinstance(state, DeepAgentState):
+        return state
+    return DeepAgentState(session_id=str(params.get("session_id", "tool_runner")))
+
+
+def _deps_from_params(params: dict[str, Any]) -> DeepAgentDeps:
+    return DeepAgentDeps(
+        state=_state_from_params(params),
+        orchestrator=params.get("orchestrator"),
+        tool_registry=params.get("tool_registry"),
+        config=params.get("config", {}),
+        metadata=params.get("metadata", {}),
+    )
+
+
+def write_todos_to_state(
+    state: DeepAgentState, request: WriteTodosRequest
 ) -> WriteTodosResponse:
-    """Tool for writing todos to the agent state."""
+    """Create todo items in ``state``."""
+
     try:
         todos_created = 0
         for todo_data in request.todos:
-            # Create todo with validation
             todo = create_todo(
                 content=todo_data["content"],
                 priority=todo_data.get("priority", 0),
@@ -56,18 +222,13 @@ def write_todos_tool(
                 metadata=todo_data.get("metadata", {}),
             )
 
-            # Set status if provided
             if "status" in todo_data:
                 try:
                     todo.status = TaskStatus(todo_data["status"])
                 except ValueError:
                     todo.status = TaskStatus.PENDING
 
-            # Add to state
-            if hasattr(ctx, "state") and hasattr(ctx.state, "add_todo"):
-                add_todo_method = getattr(ctx.state, "add_todo", None)
-                if add_todo_method is not None and callable(add_todo_method):
-                    add_todo_method(todo)
+            state.add_todo(todo)
             todos_created += 1
 
         return WriteTodosResponse(
@@ -82,31 +243,23 @@ def write_todos_tool(
         )
 
 
-def list_files_tool(ctx: RunContext[DeepAgentState]) -> ListFilesResponse:
-    """Tool for listing files in the filesystem."""
+def list_state_files(state: DeepAgentState) -> ListFilesResponse:
+    """List files in the state-backed virtual filesystem."""
+
     try:
-        files = []
-        if hasattr(ctx, "state") and hasattr(ctx.state, "files"):
-            files_dict = getattr(ctx.state, "files", None)
-            if files_dict is not None and hasattr(files_dict, "keys"):
-                keys_method = getattr(files_dict, "keys", None)
-                if keys_method is not None and callable(keys_method):
-                    files = list(keys_method())
+        files = list(state.files.keys())
         return ListFilesResponse(files=files, count=len(files))
     except Exception:
         return ListFilesResponse(files=[], count=0)
 
 
-def read_file_tool(
-    request: ReadFileRequest, ctx: RunContext[DeepAgentState]
+def read_state_file(
+    state: DeepAgentState, request: ReadFileRequest
 ) -> ReadFileResponse:
-    """Tool for reading a file from the filesystem."""
+    """Read a file from the state-backed virtual filesystem."""
+
     try:
-        file_info = None
-        if hasattr(ctx, "state") and hasattr(ctx.state, "get_file"):
-            get_file_method = getattr(ctx.state, "get_file", None)
-            if get_file_method is not None and callable(get_file_method):
-                file_info = get_file_method(request.file_path)
+        file_info = state.get_file(request.file_path)
         if not file_info:
             return ReadFileResponse(
                 content=f"Error: File '{request.file_path}' not found",
@@ -173,19 +326,14 @@ def read_file_tool(
         )
 
 
-def write_file_tool(
-    request: WriteFileRequest, ctx: RunContext[DeepAgentState]
+def write_state_file(
+    state: DeepAgentState, request: WriteFileRequest
 ) -> WriteFileResponse:
-    """Tool for writing a file to the filesystem."""
-    try:
-        # Create or update file info
-        file_info = create_file_info(path=request.file_path, content=request.content)
+    """Write a file to the state-backed virtual filesystem."""
 
-        # Add to state
-        if hasattr(ctx, "state") and hasattr(ctx.state, "add_file"):
-            add_file_method = getattr(ctx.state, "add_file", None)
-            if add_file_method is not None and callable(add_file_method):
-                add_file_method(file_info)
+    try:
+        file_info = create_file_info(path=request.file_path, content=request.content)
+        state.add_file(file_info)
 
         return WriteFileResponse(
             success=True,
@@ -203,16 +351,13 @@ def write_file_tool(
         )
 
 
-def edit_file_tool(
-    request: EditFileRequest, ctx: RunContext[DeepAgentState]
+def edit_state_file(
+    state: DeepAgentState, request: EditFileRequest
 ) -> EditFileResponse:
-    """Tool for editing a file in the filesystem."""
+    """Edit a file in the state-backed virtual filesystem."""
+
     try:
-        file_info = None
-        if hasattr(ctx, "state") and hasattr(ctx.state, "get_file"):
-            get_file_method = getattr(ctx.state, "get_file", None)
-            if get_file_method is not None and callable(get_file_method):
-                file_info = get_file_method(request.file_path)
+        file_info = state.get_file(request.file_path)
         if not file_info:
             return EditFileResponse(
                 success=False,
@@ -262,11 +407,7 @@ def edit_file_tool(
             replacement_count = 1
             result_msg = f"Successfully replaced string in '{request.file_path}'"
 
-        # Update the file
-        if hasattr(ctx, "state") and hasattr(ctx.state, "update_file_content"):
-            update_method = getattr(ctx.state, "update_file_content", None)
-            if update_method is not None and callable(update_method):
-                update_method(request.file_path, new_content)
+        state.update_file_content(request.file_path, new_content)
 
         return EditFileResponse(
             success=True,
@@ -284,52 +425,85 @@ def edit_file_tool(
         )
 
 
-async def task_tool(
-    request: TaskRequestModel, ctx: RunContext[DeepAgentState]
-) -> TaskResponse:
-    """Run a task on a subagent registered under ``state.shared_state['subagent_registry']``."""
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def delegate_task(deps: DeepAgentDeps, request: TaskRequestModel) -> TaskResponse:
+    """Delegate work to an orchestrator or registered in-process subagent."""
+
     task_id = str(uuid.uuid4())
     try:
-        TaskRequest(
+        task_request = TaskRequest(
             task_id=task_id,
             description=request.description,
             subagent_type=request.subagent_type,
             parameters=request.parameters,
         )
 
-        if hasattr(ctx, "state") and hasattr(ctx.state, "active_tasks"):
-            active_tasks = getattr(ctx.state, "active_tasks", None)
-            if active_tasks is not None and hasattr(active_tasks, "append"):
-                append_method = getattr(active_tasks, "append", None)
-                if append_method is not None and callable(append_method):
-                    append_method(task_id)
+        deps.state.active_tasks.append(task_id)
 
-        registry = (
-            ctx.state.shared_state.get("subagent_registry")
-            if hasattr(ctx, "state")
-            else None
-        )
-        if not isinstance(registry, dict):
-            registry = {}
+        result_payload: dict[str, Any]
+        orchestrator = deps.orchestrator
+        if orchestrator is not None:
+            if hasattr(orchestrator, "execute_task"):
+                raw_result = await _maybe_await(orchestrator.execute_task(task_request))
+            elif hasattr(orchestrator, "execute_with_agent"):
+                raw_result = await _maybe_await(
+                    orchestrator.execute_with_agent(
+                        request.subagent_type, request.description, deps.state
+                    )
+                )
+            else:
+                raw_result = None
 
-        sub = registry.get(request.subagent_type)
-        if sub is None:
-            return TaskResponse(
-                success=False,
-                task_id=task_id,
-                result=None,
-                message=(
-                    f"No subagent {request.subagent_type!r} in subagent_registry. "
-                    "Initialize SubAgentMiddleware so subagents are registered."
-                ),
+            if raw_result is None:
+                if task_id in deps.state.active_tasks:
+                    deps.state.active_tasks.remove(task_id)
+                return TaskResponse(
+                    success=False,
+                    task_id=task_id,
+                    result=None,
+                    message="Configured orchestrator does not expose a DeepAgent task execution method",
+                )
+            if getattr(raw_result, "success", True) is False:
+                if task_id in deps.state.active_tasks:
+                    deps.state.active_tasks.remove(task_id)
+                return TaskResponse(
+                    success=False,
+                    task_id=task_id,
+                    result=None,
+                    message=getattr(raw_result, "error", None)
+                    or "Subagent task execution failed",
+                )
+            if isinstance(raw_result, dict):
+                result_payload = raw_result
+            elif hasattr(raw_result, "result") and raw_result.result is not None:
+                result_payload = dict(raw_result.result)
+            else:
+                result_payload = {"output": raw_result}
+        else:
+            registry_map = deps.state.shared_state.get("subagent_registry", {})
+            subagent = registry_map.get(request.subagent_type)
+            if subagent is None:
+                if task_id in deps.state.active_tasks:
+                    deps.state.active_tasks.remove(task_id)
+                return TaskResponse(
+                    success=False,
+                    task_id=task_id,
+                    result=None,
+                    message=f"No subagent '{request.subagent_type}' registered",
+                )
+
+            raw_result = await _maybe_await(subagent.run(request.description))
+            payload = getattr(raw_result, "output", raw_result)
+            result_payload = (
+                dict(payload) if isinstance(payload, dict) else {"output": payload}
             )
 
-        run_out = await sub.run(request.description)
-        payload = getattr(run_out, "output", run_out)
-        result: dict[str, Any] = (
-            dict(payload) if isinstance(payload, dict) else {"output": payload}
-        )
-        result.update(
+        result_payload.update(
             {
                 "task_id": task_id,
                 "description": request.description,
@@ -338,42 +512,85 @@ async def task_tool(
             }
         )
 
-        if (
-            hasattr(ctx, "state")
-            and hasattr(ctx.state, "active_tasks")
-            and hasattr(ctx.state, "completed_tasks")
-        ):
-            active_tasks = getattr(ctx.state, "active_tasks", None)
-            completed_tasks = getattr(ctx.state, "completed_tasks", None)
-
-            if active_tasks is not None and hasattr(active_tasks, "remove"):
-                remove_method = getattr(active_tasks, "remove", None)
-                if (
-                    remove_method is not None
-                    and callable(remove_method)
-                    and task_id in active_tasks
-                ):
-                    remove_method(task_id)
-
-            if completed_tasks is not None and hasattr(completed_tasks, "append"):
-                append_method = getattr(completed_tasks, "append", None)
-                if append_method is not None and callable(append_method):
-                    append_method(task_id)
+        if task_id in deps.state.active_tasks:
+            deps.state.active_tasks.remove(task_id)
+        deps.state.completed_tasks.append(task_id)
 
         return TaskResponse(
             success=True,
             task_id=task_id,
-            result=result,
+            result=result_payload,
             message=f"Task {task_id} executed successfully",
         )
 
     except Exception as e:
+        if task_id in deps.state.active_tasks:
+            deps.state.active_tasks.remove(task_id)
         return TaskResponse(
             success=False,
             task_id=task_id,
             result=None,
             message=f"Error executing task: {e!s}",
         )
+
+
+def _run_task_delegation_sync(
+    deps: DeepAgentDeps, request: TaskRequestModel
+) -> TaskResponse:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(delegate_task(deps, request))
+    raise RuntimeError(
+        "TaskToolRunner cannot execute async task delegation while an event loop is running"
+    )
+
+
+# Pydantic AI tool functions
+def write_todos_tool(
+    ctx: RunContext[DeepAgentDeps], request: WriteTodosRequest
+) -> WriteTodosResponse:
+    """Tool for writing todos to the agent state."""
+
+    return write_todos_to_state(_state_from_context(ctx), request)
+
+
+def list_files_tool(ctx: RunContext[DeepAgentDeps]) -> ListFilesResponse:
+    """Tool for listing files in the state-backed filesystem."""
+
+    return list_state_files(_state_from_context(ctx))
+
+
+def read_file_tool(
+    ctx: RunContext[DeepAgentDeps], request: ReadFileRequest
+) -> ReadFileResponse:
+    """Tool for reading a file from the state-backed filesystem."""
+
+    return read_state_file(_state_from_context(ctx), request)
+
+
+def write_file_tool(
+    ctx: RunContext[DeepAgentDeps], request: WriteFileRequest
+) -> WriteFileResponse:
+    """Tool for writing a file to the state-backed filesystem."""
+
+    return write_state_file(_state_from_context(ctx), request)
+
+
+def edit_file_tool(
+    ctx: RunContext[DeepAgentDeps], request: EditFileRequest
+) -> EditFileResponse:
+    """Tool for editing a file in the state-backed filesystem."""
+
+    return edit_state_file(_state_from_context(ctx), request)
+
+
+async def task_tool(
+    ctx: RunContext[DeepAgentDeps], request: TaskRequestModel
+) -> TaskResponse:
+    """Tool for executing tasks with registered subagents."""
+
+    return await delegate_task(_deps_from_context(ctx), request)
 
 
 # Tool runner implementations for compatibility with existing system
@@ -398,19 +615,9 @@ class WriteTodosToolRunner(ToolRunner):
 
     def run(self, params: dict[str, Any]) -> ExecutionResult:
         try:
-            todos_data = params.get("todos", [])
-            WriteTodosRequest(todos=todos_data)
-
-            # This would normally be called through Pydantic AI
-            # For now, return a mock result
-            return ExecutionResult(
-                success=True,
-                data={
-                    "success": True,
-                    "todos_created": len(todos_data),
-                    "message": f"Successfully created {len(todos_data)} todos",
-                },
-            )
+            request = WriteTodosRequest(todos=params.get("todos", []))
+            response = write_todos_to_state(_state_from_params(params), request)
+            return ExecutionResult(success=response.success, data=response.model_dump())
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
 
@@ -430,9 +637,8 @@ class ListFilesToolRunner(ToolRunner):
 
     def run(self, params: dict[str, Any]) -> ExecutionResult:
         try:
-            # This would normally be called through Pydantic AI
-            # For now, return a mock result
-            return ExecutionResult(success=True, data={"files": [], "count": 0})
+            response = list_state_files(_state_from_params(params))
+            return ExecutionResult(success=True, data=response.model_dump())
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
 
@@ -463,17 +669,8 @@ class ReadFileToolRunner(ToolRunner):
                 limit=params.get("limit", 2000),
             )
 
-            # This would normally be called through Pydantic AI
-            # For now, return a mock result
-            return ExecutionResult(
-                success=True,
-                data={
-                    "content": "",
-                    "file_path": request.file_path,
-                    "lines_read": 0,
-                    "total_lines": 0,
-                },
-            )
+            response = read_state_file(_state_from_params(params), request)
+            return ExecutionResult(success=True, data=response.model_dump())
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
 
@@ -502,17 +699,8 @@ class WriteFileToolRunner(ToolRunner):
                 file_path=params.get("file_path", ""), content=params.get("content", "")
             )
 
-            # This would normally be called through Pydantic AI
-            # For now, return a mock result
-            return ExecutionResult(
-                success=True,
-                data={
-                    "success": True,
-                    "file_path": request.file_path,
-                    "bytes_written": len(request.content.encode("utf-8")),
-                    "message": f"Successfully wrote file {request.file_path}",
-                },
-            )
+            response = write_state_file(_state_from_params(params), request)
+            return ExecutionResult(success=response.success, data=response.model_dump())
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
 
@@ -549,17 +737,8 @@ class EditFileToolRunner(ToolRunner):
                 replace_all=params.get("replace_all", False),
             )
 
-            # This would normally be called through Pydantic AI
-            # For now, return a mock result
-            return ExecutionResult(
-                success=True,
-                data={
-                    "success": True,
-                    "file_path": request.file_path,
-                    "replacements_made": 0,
-                    "message": f"Successfully edited file {request.file_path}",
-                },
-            )
+            response = edit_state_file(_state_from_params(params), request)
+            return ExecutionResult(success=response.success, data=response.model_dump())
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
 
@@ -594,41 +773,99 @@ class TaskToolRunner(ToolRunner):
                 parameters=params.get("parameters", {}),
             )
 
-            # This would normally be called through Pydantic AI
-            # For now, return a mock result
-            task_id = str(uuid.uuid4())
+            response = _run_task_delegation_sync(_deps_from_params(params), request)
             return ExecutionResult(
-                success=True,
-                data={
-                    "success": True,
-                    "task_id": task_id,
-                    "result": {
-                        "task_id": task_id,
-                        "description": request.description,
-                        "subagent_type": request.subagent_type,
-                        "status": "executed",
-                    },
-                    "message": f"Task {task_id} executed successfully",
-                },
+                success=response.success,
+                data=response.model_dump(),
+                error=None if response.success else response.message,
             )
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
 
 
+DEEP_AGENT_TOOL_MAP = {
+    "write_todos": write_todos_tool,
+    "list_files": list_files_tool,
+    "read_file": read_file_tool,
+    "write_file": write_file_tool,
+    "edit_file": edit_file_tool,
+    "task": task_tool,
+}
+
+DEEP_AGENT_TOOL_RUNNERS = {
+    "write_todos": WriteTodosToolRunner,
+    "list_files": ListFilesToolRunner,
+    "read_file": ReadFileToolRunner,
+    "write_file": WriteFileToolRunner,
+    "edit_file": EditFileToolRunner,
+    "task": TaskToolRunner,
+}
+
+
+def get_deep_agent_tools() -> list[Any]:
+    """Return named Pydantic AI tools supported by the MVP runtime."""
+
+    return [Tool(tool, name=name) for name, tool in DEEP_AGENT_TOOL_MAP.items()]
+
+
+def resolve_deep_agent_tools(tool_names: Sequence[str]) -> list[Any]:
+    """Resolve configured DeepAgent tool names to named Pydantic AI tools."""
+
+    unknown = [name for name in tool_names if name not in DEEP_AGENT_TOOL_MAP]
+    if unknown:
+        known = ", ".join(sorted(DEEP_AGENT_TOOL_MAP))
+        raise ValueError(f"Unknown DeepAgent tool(s): {unknown}. Known tools: {known}")
+    return [Tool(DEEP_AGENT_TOOL_MAP[name], name=name) for name in tool_names]
+
+
+def register_deep_agent_tool_runners() -> None:
+    """Register DeepAgent ToolRunners with the legacy tool registry."""
+
+    for name, runner in DEEP_AGENT_TOOL_RUNNERS.items():
+        registry.register(name, runner)
+
+
+register_deep_agent_tool_runners()
+
+
 # Export all tools
 __all__ = [
+    # Runtime helpers
+    "DEEP_AGENT_TOOL_MAP",
+    "DEEP_AGENT_TOOL_RUNNERS",
+    "EditFileRequest",
+    "EditFileResponse",
     "EditFileToolRunner",
+    "ListFilesResponse",
     "ListFilesToolRunner",
+    "ReadFileRequest",
+    "ReadFileResponse",
     "ReadFileToolRunner",
+    "TaskRequestModel",
+    "TaskResponse",
     "TaskToolRunner",
+    "WriteFileRequest",
+    "WriteFileResponse",
     "WriteFileToolRunner",
+    # Request/Response models
+    "WriteTodosRequest",
+    "WriteTodosResponse",
     # Tool runners
     "WriteTodosToolRunner",
+    "delegate_task",
     "edit_file_tool",
+    "edit_state_file",
+    "get_deep_agent_tools",
     "list_files_tool",
+    "list_state_files",
     "read_file_tool",
+    "read_state_file",
+    "register_deep_agent_tool_runners",
+    "resolve_deep_agent_tools",
     "task_tool",
     "write_file_tool",
+    "write_state_file",
+    "write_todos_to_state",
     # Pydantic AI tools
     "write_todos_tool",
 ]

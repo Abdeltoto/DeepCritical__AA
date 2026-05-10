@@ -36,7 +36,7 @@ deep_agent:
       model_name: "anthropic:claude-sonnet-4-0"
       max_iterations: 10
       timeout: 300.0
-      tools: ["web_search", "rag_query", "task"]
+      tools: ["write_todos", "read_file", "task"]
       capabilities: ["research", "analysis"]
 
     general_agent:

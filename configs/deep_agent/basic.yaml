@@ -37,7 +37,7 @@ deep_agent:
       model_name: "anthropic:claude-sonnet-4-0"
       max_iterations: 5
       timeout: 120.0
-      tools: ["web_search"]
+      tools: ["write_todos", "read_file"]
       capabilities: ["research"]
 
   # Basic middleware configuration

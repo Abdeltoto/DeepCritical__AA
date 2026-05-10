@@ -206,6 +206,11 @@ unfixable = []
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+[tool.ruff.lint.per-file-ignores]
+"DeepResearch/src/agents/deep_agent_implementations.py" = ["N805"]
+"DeepResearch/src/prompts/deep_agent_graph.py" = ["N805"]
+"DeepResearch/src/tools/deep_agent_tools.py" = ["N805"]
+
 [tool.ruff.format]
 # Like Black, use double quotes for strings.
 quote-style = "double"
