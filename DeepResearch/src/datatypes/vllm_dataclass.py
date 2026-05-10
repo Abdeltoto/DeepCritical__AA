@@ -11,9 +11,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from DeepResearch.src.utils.network_binding import LOCAL_BIND_HOST, validate_bind_host
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -947,17 +949,17 @@ class UsageStats(BaseModel):
 class EngineMetrics(BaseModel):
     """Metrics for the VLLM engine."""
 
-    num_requests_running: int = Field(..., description="Number of running requests")
-    num_requests_swapped: int = Field(..., description="Number of swapped requests")
-    num_requests_waiting: int = Field(..., description="Number of waiting requests")
-    num_requests_finished: int = Field(..., description="Number of finished requests")
-    num_requests_failed: int = Field(..., description="Number of failed requests")
-    num_requests_cancelled: int = Field(..., description="Number of cancelled requests")
-    num_requests_total: int = Field(..., description="Total number of requests")
-    num_blocks_allocated: int = Field(..., description="Number of allocated blocks")
-    num_blocks_free: int = Field(..., description="Number of free blocks")
-    gpu_cache_usage: float = Field(..., description="GPU cache usage percentage")
-    cpu_cache_usage: float = Field(..., description="CPU cache usage percentage")
+    num_requests_running: int = Field(0, description="Number of running requests")
+    num_requests_swapped: int = Field(0, description="Number of swapped requests")
+    num_requests_waiting: int = Field(0, description="Number of waiting requests")
+    num_requests_finished: int = Field(0, description="Number of finished requests")
+    num_requests_failed: int = Field(0, description="Number of failed requests")
+    num_requests_cancelled: int = Field(0, description="Number of cancelled requests")
+    num_requests_total: int = Field(0, description="Total number of requests")
+    num_blocks_allocated: int = Field(0, description="Number of allocated blocks")
+    num_blocks_free: int = Field(0, description="Number of free blocks")
+    gpu_cache_usage: float = Field(0.0, description="GPU cache usage percentage")
+    cpu_cache_usage: float = Field(0.0, description="CPU cache usage percentage")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -995,6 +997,33 @@ class ServerMetrics(BaseModel):
                 "failed_requests": 50,
             }
         }
+    )
+
+
+def create_empty_server_metrics() -> ServerMetrics:
+    """Create zero-valued server metrics for an unstarted VLLM server."""
+    return ServerMetrics(
+        engine_metrics=EngineMetrics(
+            num_requests_running=0,
+            num_requests_swapped=0,
+            num_requests_waiting=0,
+            num_requests_finished=0,
+            num_requests_failed=0,
+            num_requests_cancelled=0,
+            num_requests_total=0,
+            num_blocks_allocated=0,
+            num_blocks_free=0,
+            gpu_cache_usage=0.0,
+            cpu_cache_usage=0.0,
+        ),
+        server_start_time=datetime.now(),
+        uptime=0.0,
+        total_requests=0,
+        successful_requests=0,
+        failed_requests=0,
+        average_latency=0.0,
+        p95_latency=0.0,
+        p99_latency=0.0,
     )
 
 
@@ -1268,17 +1297,41 @@ class VLLMServer(BaseModel):
 
     config: VllmConfig = Field(..., description="VLLM configuration")
     engine: AsyncLLMEngine | None = Field(None, description="Async LLM engine")
-    host: str = Field("0.0.0.0", description="Server host")
+    host: str = Field(LOCAL_BIND_HOST, description="Server host")
     port: int = Field(8000, description="Server port")
+    allow_external_bind: bool = Field(
+        False,
+        description="Allow binding to wildcard or externally reachable interfaces.",
+    )
     metrics: ServerMetrics = Field(
-        default_factory=ServerMetrics, description="Server metrics"
+        default_factory=create_empty_server_metrics, description="Server metrics"
     )
 
     def __init__(
-        self, config: VllmConfig, host: str = "0.0.0.0", port: int = 8000, **kwargs
+        self,
+        config: VllmConfig,
+        host: str = LOCAL_BIND_HOST,
+        port: int = 8000,
+        allow_external_bind: bool = False,
+        **kwargs,
     ):
-        super().__init__(config=config, host=host, port=port, **kwargs)
+        super().__init__(
+            config=config,
+            host=host,
+            port=port,
+            allow_external_bind=allow_external_bind,
+            **kwargs,
+        )
         self.engine = AsyncLLMEngine(config)
+
+    @model_validator(mode="after")
+    def validate_network_binding(self) -> Self:
+        """Validate the configured server bind host."""
+        self.host = validate_bind_host(
+            self.host,
+            allow_external_bind=self.allow_external_bind,
+        )
+        return self
 
     async def start(self):
         """Start the server."""
@@ -1849,7 +1902,7 @@ def create_example_async_engine() -> AsyncLLMEngine:
 def create_example_server() -> VLLMServer:
     """Create an example server."""
     config = create_vllm_config(model="gpt2", gpu_memory_utilization=0.8)
-    return VLLMServer(config, host="0.0.0.0", port=8000)
+    return VLLMServer(config, host=LOCAL_BIND_HOST, port=8000)
 
 
 # ============================================================================
@@ -1958,7 +2011,7 @@ from vllm_comprehensive import VLLMServer, create_vllm_config
 
 async def start_server():
     config = create_vllm_config(model="gpt2")
-    server = VLLMServer(config, host="0.0.0.0", port=8000)
+    server = VLLMServer(config, host="127.0.0.1", port=8000)
     await server.start()
 
 asyncio.run(start_server())

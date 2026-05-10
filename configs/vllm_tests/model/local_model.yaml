@@ -37,7 +37,6 @@ container:
   # Environment variables
   environment:
     VLLM_MODEL: "${model.name}"
-    VLLM_HOST: "0.0.0.0"
     VLLM_PORT: "8000"
     VLLM_MAX_TOKENS: "256"
     VLLM_TEMPERATURE: "0.7"
@@ -46,7 +45,10 @@ container:
 # Server configuration
 server:
   # Server settings
-  host: "0.0.0.0"
+  host: "127.0.0.1"
+  # Docker-internal bind used by the VLLM process inside the container.
+  # Host-side clients should use the mapped connection URL, not this value.
+  container_bind_host: "0.0.0.0"
   port: 8000
   workers: 1
 
