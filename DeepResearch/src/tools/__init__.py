@@ -11,6 +11,7 @@ from typing import Any
 
 _DEFAULT_REGISTRY_MODULES = (
     "analytics_tools",
+    "bioinfomcp_catalog",
     "bioinformatics_tools",
     "deepsearch_tools",
     "deepsearch_workflow_tool",
@@ -29,6 +30,7 @@ _DEFAULT_REGISTRY_MODULES = (
 
 _SUBMODULE_EXPORTS = {
     "analytics_tools",
+    "bioinfomcp_catalog",
     "bioinformatics_tools",
     "code_sandbox",
     "deepsearch_tools",
@@ -130,6 +132,7 @@ __all__ = [
     "RAGSearchTool",
     "WebSearchTool",
     "analytics_tools",
+    "bioinfomcp_catalog",
     "bioinformatics_tools",
     "code_sandbox",
     "deepsearch_tools",

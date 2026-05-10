@@ -463,6 +463,19 @@ class TestToolsModuleImports:
         assert GOAnnotationTool is not None
         assert PubMedRetrievalTool is not None
 
+    def test_bioinfomcp_catalog_imports(self):
+        """Test all imports from bioinfomcp_catalog module."""
+
+        from DeepResearch.src.tools.bioinfomcp_catalog import (
+            BioinfoMCPToolCatalogTool,
+            BioinfoMCPToolSpec,
+            list_issue_130_bioinfomcp_tools,
+        )
+
+        assert BioinfoMCPToolCatalogTool is not None
+        assert BioinfoMCPToolSpec is not None
+        assert list_issue_130_bioinfomcp_tools is not None
+
     def test_mcp_server_management_imports(self):
         """Test all imports from mcp_server_management module."""
 
