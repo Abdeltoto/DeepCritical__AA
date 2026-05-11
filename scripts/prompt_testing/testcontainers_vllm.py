@@ -14,6 +14,11 @@ from typing import Any, TypedDict
 
 from omegaconf import DictConfig
 
+from DeepResearch.src.utils.network_binding import (
+    DOCKER_CONTAINER_BIND_HOST,
+    LOCAL_BIND_HOST,
+)
+
 
 class ReasoningData(TypedDict):
     """Type definition for reasoning data extracted from LLM responses."""
@@ -38,17 +43,19 @@ try:
             model: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             host_port: int = 8000,
             container_port: int = 8000,
+            container_bind_host: str = DOCKER_CONTAINER_BIND_HOST,
             **kwargs,
         ):
             super().__init__(image, **kwargs)
             self.model = model
             self.host_port = host_port
             self.container_port = container_port
+            self.container_bind_host = container_bind_host
 
             # Configure container
             self.with_exposed_ports(self.container_port)
             self.with_env("VLLM_MODEL", model)
-            self.with_env("VLLM_HOST", "0.0.0.0")
+            self.with_env("VLLM_HOST", container_bind_host)
             self.with_env("VLLM_PORT", str(container_port))
 
         def get_connection_url(self) -> str:
@@ -162,8 +169,6 @@ class VLLMPromptTester:
 
         # Use provided config or create default
         if config is None:
-            from pathlib import Path
-
             from hydra import compose, initialize_config_dir
 
             config_dir = Path("configs")
@@ -285,6 +290,11 @@ class VLLMPromptTester:
             },
             "model": {
                 "name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                "server": {
+                    "host": LOCAL_BIND_HOST,
+                    "container_bind_host": DOCKER_CONTAINER_BIND_HOST,
+                    "port": 8000,
+                },
                 "generation": {
                     "max_tokens": 256,
                     "temperature": 0.7,
@@ -325,16 +335,14 @@ class VLLMPromptTester:
         container_config = model_config.get("container", {})
         server_config = model_config.get("server", {})
         generation_config = model_config.get("generation", {})
-
-        # Create VLLM container with configuration
-        self.container = VLLMContainer(
-            image=container_config.get("image", "vllm/vllm-openai:latest"),
-            model=self.model_name,
-            host_port=server_config.get("port", 8000),
-            container_port=server_config.get("port", 8000),
-            environment={
+        container_bind_host = server_config.get(
+            "container_bind_host", DOCKER_CONTAINER_BIND_HOST
+        )
+        container_environment = dict(container_config.get("environment", {}))
+        container_environment.update(
+            {
                 "VLLM_MODEL": self.model_name,
-                "VLLM_HOST": server_config.get("host", "0.0.0.0"),
+                "VLLM_HOST": container_bind_host,
                 "VLLM_PORT": str(server_config.get("port", 8000)),
                 "VLLM_MAX_TOKENS": str(
                     generation_config.get("max_tokens", self.max_tokens)
@@ -342,9 +350,17 @@ class VLLMPromptTester:
                 "VLLM_TEMPERATURE": str(
                     generation_config.get("temperature", self.temperature)
                 ),
-                # Additional environment variables from config
-                **container_config.get("environment", {}),
-            },
+            }
+        )
+
+        # Create VLLM container with configuration
+        self.container = VLLMContainer(
+            image=container_config.get("image", "vllm/vllm-openai:latest"),
+            model=self.model_name,
+            host_port=server_config.get("port", 8000),
+            container_port=server_config.get("port", 8000),
+            container_bind_host=container_bind_host,
+            environment=container_environment,
         )
 
         # Type guard: container must be initialized

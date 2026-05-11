@@ -212,3 +212,5 @@ nav:
   - Examples:
     - Basic Usage: examples/basic.md
     - Advanced Workflows: examples/advanced.md
+    - LLM Hypothesis Demo: llm_hypothesis_demo.md
+    - Literature Review Pipeline: literature_review_pipeline.md

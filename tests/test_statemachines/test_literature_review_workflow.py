@@ -42,6 +42,93 @@ def _cfg(fixture_path: str | None = None):
 
 
 @pytest.mark.asyncio
+async def test_literature_llm_synthesis_success_mocked(monkeypatch):
+    async def fake_llm(**_kwargs):
+        from DeepResearch.src.datatypes.literature_review import LiteratureSynthesis
+
+        syn = LiteratureSynthesis(
+            summary="mock",
+            consensus_findings=["c"],
+            conflicting_findings=[],
+            themes=[],
+            limitations=[],
+            gaps=[],
+            future_work=[],
+        )
+        return syn, "# Mock LLM Report\n", {"truncation_notes": []}
+
+    monkeypatch.setattr(
+        "DeepResearch.src.statemachines.literature_review_workflow.synthesize_literature_with_llm",
+        fake_llm,
+    )
+    cfg = _cfg(str(FIXTURE_PATH))
+    cfg.literature_review.llm_synthesis = {
+        "enabled": True,
+        "model": "gpt-4o-mini",
+    }
+
+    result = await run_literature_review_workflow(
+        "What evidence links sleep quality to memory consolidation?",
+        cfg,
+    )
+
+    assert result["status"] == "success"
+    assert result["metadata"]["synthesis_mode"] == "llm"
+    assert "Mock LLM Report" in result["markdown_report"]
+
+
+@pytest.mark.asyncio
+async def test_literature_llm_synthesis_fallback_on_error(monkeypatch):
+    async def boom(**_kwargs):
+        raise RuntimeError("LLM unavailable")
+
+    monkeypatch.setattr(
+        "DeepResearch.src.statemachines.literature_review_workflow.synthesize_literature_with_llm",
+        boom,
+    )
+    cfg = _cfg(str(FIXTURE_PATH))
+    cfg.literature_review.llm_synthesis = {
+        "enabled": True,
+        "model": "gpt-4o-mini",
+        "fallback_on_error": True,
+    }
+
+    result = await run_literature_review_workflow(
+        "What evidence links sleep quality to memory consolidation?",
+        cfg,
+    )
+
+    assert result["status"] == "success"
+    assert result["metadata"]["synthesis_mode"] == "heuristic_fallback"
+    assert any("LLM synthesis failed" in w for w in result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_literature_llm_synthesis_no_fallback_fails(monkeypatch):
+    async def boom(**_kwargs):
+        raise RuntimeError("LLM unavailable")
+
+    monkeypatch.setattr(
+        "DeepResearch.src.statemachines.literature_review_workflow.synthesize_literature_with_llm",
+        boom,
+    )
+    cfg = _cfg(str(FIXTURE_PATH))
+    cfg.literature_review.llm_synthesis = {
+        "enabled": True,
+        "model": "gpt-4o-mini",
+        "fallback_on_error": False,
+    }
+
+    result = await run_literature_review_workflow(
+        "What evidence links sleep quality to memory consolidation?",
+        cfg,
+    )
+
+    assert result["status"] == "failed"
+    assert "Literature LLM synthesis failed" in result["errors"][-1]
+
+
+@pytest.mark.asyncio
 async def test_literature_review_workflow_fixture_mode():
     result = await run_literature_review_workflow(
         "What evidence links sleep quality to memory consolidation?",
@@ -57,13 +144,12 @@ async def test_literature_review_workflow_fixture_mode():
 
 
 @pytest.mark.asyncio
-async def test_literature_review_workflow_empty_fixture_reports_no_sources(tmp_path):
-    empty_fixture = tmp_path / "empty_sources.json"
-    empty_fixture.write_text('{"sources": []}', encoding="utf-8")
+async def test_literature_review_workflow_no_sources_after_screening():
+    """Fixture has records, but an unrelated question yields zero included sources."""
 
     result = await run_literature_review_workflow(
-        "What evidence links sleep quality to memory consolidation?",
-        _cfg(str(empty_fixture)),
+        "What is the economic impact of lunar phosphate mining regulations?",
+        _cfg(str(FIXTURE_PATH)),
     )
 
     assert result["status"] == "success"

@@ -1,12 +1,14 @@
 # Critical literature review app configuration
 
 mode: review
-source_mode: fixture
+source_mode: pubmed
 max_sources: 12
 include_preprints: true
-live_retrieval_enabled: false
+live_retrieval_enabled: true
 min_relevance_score: 0.35
 fixture_path: null
+strict_screening: false
+exclude_irrelevant_phrases: false
 
 inclusion_criteria:
   - Directly addresses the review question
@@ -23,3 +25,13 @@ search:
 outputs:
   markdown_path: null
   json_path: null
+
+llm_synthesis:
+  enabled: false
+  model: null
+  model_ref: null
+  base_url: null
+  api_key: null
+  temperature: 0.35
+  max_evidence_chars: 12000
+  fallback_on_error: true

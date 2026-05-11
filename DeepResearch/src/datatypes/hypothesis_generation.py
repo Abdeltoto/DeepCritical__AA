@@ -5,6 +5,7 @@ Typed models for evidence-grounded hypothesis generation workflows.
 from __future__ import annotations
 
 import re
+import warnings
 from enum import Enum
 from typing import Any
 
@@ -80,6 +81,20 @@ class HypothesisGenerationParams(BaseModel):
     model_name: str = Field(
         default_factory=lambda: resolve_model_name(None, "default"),
     )
+    """Plain model id string for Pydantic AI when not using ``model_ref`` / ``base_url``."""
+
+    model_ref: str | None = Field(
+        None,
+        description="Optional registry role name passed to resolve_pydantic_ai_model.",
+    )
+    base_url: str | None = Field(
+        None,
+        description="OpenAI-compatible API base URL; builds OpenAICompatibleModel when set.",
+    )
+    api_key: str | None = Field(
+        None, description="API key for OpenAI-compatible endpoint."
+    )
+
     temperature: float = Field(0.4, ge=0.0, le=2.0)
     num_results: int = Field(4, ge=1, le=20)
     chunk_size: int = Field(1000, ge=100, le=8000)
@@ -88,6 +103,14 @@ class HypothesisGenerationParams(BaseModel):
     extra_document_text: str = ""
     run_quality_judge: bool = False
     judge_id: str = "hypothesis_quality_judge"
+    fail_on_judge_failure: bool = Field(
+        False,
+        description="When True and run_quality_judge is used, overall success is False if judge fails.",
+    )
+
+    propose_retries: int = Field(0, ge=0, le=10)
+    fail_on_empty_output: bool = False
+    fail_on_critic_drop_all: bool = False
 
     model_config = ConfigDict(extra="ignore")
 
@@ -100,6 +123,13 @@ class HypothesisGenerationParams(BaseModel):
     ) -> HypothesisGenerationParams:
         """Build params from orchestration ``parameters`` dict with safe defaults."""
         dm = default_model or resolve_model_name(None, "default")
+        if "enable_confidence_scoring" in data:
+            warnings.warn(
+                "enable_confidence_scoring is deprecated and unused by the LLM "
+                "hypothesis pipeline; remove from config.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         base: dict[str, Any] = {
             "hypothesis_types": data.get(
                 "hypothesis_types",
@@ -111,6 +141,9 @@ class HypothesisGenerationParams(BaseModel):
             "max_hypotheses": int(data.get("max_hypotheses", 10)),
             "max_evidence_chars": int(data.get("max_evidence_chars", 12000)),
             "model_name": str(data.get("model_name", dm)),
+            "model_ref": data.get("model_ref"),
+            "base_url": data.get("base_url"),
+            "api_key": data.get("api_key"),
             "temperature": float(data.get("temperature", 0.4)),
             "num_results": int(data.get("num_results", 4)),
             "chunk_size": int(data.get("chunk_size", 1000)),
@@ -119,6 +152,10 @@ class HypothesisGenerationParams(BaseModel):
             "extra_document_text": str(data.get("extra_document_text", "")),
             "run_quality_judge": bool(data.get("run_quality_judge", False)),
             "judge_id": str(data.get("judge_id", "hypothesis_quality_judge")),
+            "fail_on_judge_failure": bool(data.get("fail_on_judge_failure", False)),
+            "propose_retries": int(data.get("propose_retries", 0)),
+            "fail_on_empty_output": bool(data.get("fail_on_empty_output", False)),
+            "fail_on_critic_drop_all": bool(data.get("fail_on_critic_drop_all", False)),
         }
         return cls.model_validate(base)
 

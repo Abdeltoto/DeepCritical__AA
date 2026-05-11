@@ -5,6 +5,8 @@ Container management utilities for testing.
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.network import Network
 
+from DeepResearch.src.utils.network_binding import DOCKER_CONTAINER_BIND_HOST
+
 
 class ContainerManager:
     """Manages multiple containers for complex test scenarios."""
@@ -65,7 +67,7 @@ class VLLMContainer(DockerContainer):
         """Configure VLLM-specific settings."""
         # Use CPU-only mode for testing to avoid CUDA issues
         self.with_env("VLLM_MODEL", self.model)
-        self.with_env("VLLM_HOST", "0.0.0.0")
+        self.with_env("VLLM_HOST", DOCKER_CONTAINER_BIND_HOST)
         self.with_env("VLLM_PORT", "8000")
         # Force CPU-only mode to avoid CUDA/GPU detection issues in containers
         self.with_env("VLLM_DEVICE", "cpu")
