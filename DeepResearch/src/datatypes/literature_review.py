@@ -7,6 +7,7 @@ screening, appraisal, synthesis, and the app-facing report payload.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -21,11 +22,11 @@ class LiteratureReviewRequest(BaseModel):
     question: str = Field(..., description="Research question or topic")
     mode: str = Field("review", description="Review mode")
     domain: str | None = Field(None, description="Optional domain hint")
-    source_mode: SourceMode = Field("fixture", description="Retrieval backend")
+    source_mode: SourceMode = Field("pubmed", description="Retrieval backend")
     max_sources: int = Field(12, ge=1, description="Maximum candidate sources")
     include_preprints: bool = Field(True, description="Whether to include preprints")
     live_retrieval_enabled: bool = Field(
-        False, description="Whether live network retrieval is allowed"
+        True, description="Whether live network retrieval is allowed"
     )
     min_relevance_score: float = Field(
         0.35, ge=0.0, le=1.0, description="Screening threshold"
@@ -86,7 +87,7 @@ class LiteratureSearchPlan(BaseModel):
     question: str
     queries: list[str] = Field(default_factory=list)
     focus_terms: list[str] = Field(default_factory=list)
-    source_mode: SourceMode = "fixture"
+    source_mode: SourceMode = "pubmed"
     inclusion_criteria: list[str] = Field(default_factory=list)
     exclusion_criteria: list[str] = Field(default_factory=list)
     max_sources: int = 12
@@ -158,6 +159,21 @@ class LiteratureSynthesis(BaseModel):
     model_config = ConfigDict(json_schema_extra={})
 
 
+class LiteratureSynthesisLLMOutput(BaseModel):
+    """Structured output from the optional LLM synthesis agent (`output_type`)."""
+
+    synthesis: LiteratureSynthesis
+    markdown_report: str = Field(
+        ..., description="Full markdown critical review section"
+    )
+    disclaimer: str = Field(
+        "",
+        description="Optional safety or limitation notice appended by the model.",
+    )
+
+    model_config = ConfigDict(json_schema_extra={})
+
+
 class LiteratureReviewReport(BaseModel):
     """Complete literature review report."""
 
@@ -190,16 +206,56 @@ class LiteratureReviewWorkflowResult(BaseModel):
     model_config = ConfigDict(json_schema_extra={})
 
 
+class LiteratureReviewDatasetEntry(BaseModel):
+    """One hypothesis-linked literature review run in a combined dataset."""
+
+    hypothesis_index: int = Field(..., ge=0)
+    hypothesis_statement: str = ""
+    review_question: str = ""
+    literature_result: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Serialized LiteratureReviewWorkflowResult or error-shaped dict.",
+    )
+    status: str = Field(
+        "success",
+        description="success | failed | skipped",
+    )
+
+    model_config = ConfigDict(json_schema_extra={})
+
+
+class LiteratureReviewDataset(BaseModel):
+    """Dataset bundling hypothesis generation output with per-hypothesis literature reviews."""
+
+    dataset_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Stable id for this combined run.",
+    )
+    parent_question: str = Field(..., description="Original research question")
+    hypothesis_dataset_id: str | None = Field(
+        None,
+        description="HypothesisDataset.dataset_id when available.",
+    )
+    hypothesis_dataset_name: str | None = None
+    entries: list[LiteratureReviewDatasetEntry] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(json_schema_extra={})
+
+
 __all__ = [
     "CriticalAppraisal",
     "EvidenceTableRow",
     "LiteratureGap",
+    "LiteratureReviewDataset",
+    "LiteratureReviewDatasetEntry",
     "LiteratureReviewReport",
     "LiteratureReviewRequest",
     "LiteratureReviewWorkflowResult",
     "LiteratureSearchPlan",
     "LiteratureSource",
     "LiteratureSynthesis",
+    "LiteratureSynthesisLLMOutput",
     "ScreeningDecision",
     "ScreeningDecisionValue",
     "SourceMode",

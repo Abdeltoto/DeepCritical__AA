@@ -136,7 +136,13 @@ class Plan(BaseNode[ResearchState, None, None]):
 
         flows_cfg = getattr(cfg, "flows", {})
         literature_review_cfg = getattr(flows_cfg, "literature_review", None)
+        orchestration_cfg_early = getattr(cfg, "workflow_orchestration", None)
         if getattr(literature_review_cfg or {}, "enabled", False):
+            if getattr(orchestration_cfg_early or {}, "enabled", False):
+                ctx.state.notes.append(
+                    "Literature review takes precedence over workflow_orchestration "
+                    "(both were enabled)"
+                )
             ctx.state.notes.append("Literature review flow enabled")
             return LiteratureReviewRun()
 

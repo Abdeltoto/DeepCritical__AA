@@ -59,6 +59,10 @@ dev = [
 deepresearch = "DeepResearch.app:main"
 deepresearch-hypothesis = "DeepResearch.hypothesis_app:main"
 deepresearch-literature-review = "DeepResearch.literature_review_app:main"
+deepresearch-llm-hypothesis = "DeepResearch.scripts.run_llm_hypothesis_pipeline:main"
+deepresearch-literature-pipeline = "DeepResearch.scripts.run_literature_review_pipeline:main"
+deepresearch-hypothesis-literature = "DeepResearch.scripts.run_hypothesis_literature_pipeline:main"
+deepresearch-upload-dataset = "DeepResearch.scripts.upload_dataset_repository:main"
 
 [build-system]
 requires = ["hatchling"]

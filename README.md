@@ -27,6 +27,11 @@ flows:
 - **Pydantic AI Agents**: Multi-agent orchestration with `@defer` tools
 - **Flow Routing**: Dynamic composition based on `flows.*.enabled` flags
 
+### LLM hypothesis CLI and OpenTUI demo
+
+- **CLI**: `uv run deepresearch-llm-hypothesis --question "..."` — JSONL events on stdout; supports `--base-url` / `--api-key` for OpenAI-compatible servers. See [docs/llm_hypothesis_demo.md](docs/llm_hypothesis_demo.md).
+- **TUI**: Bun + OpenTUI front-end under [`tui/`](tui/README.md) that wraps the same CLI subprocess.
+
 ### Existing Flow Infrastructure
 The project already has the foundation for your vision:
 

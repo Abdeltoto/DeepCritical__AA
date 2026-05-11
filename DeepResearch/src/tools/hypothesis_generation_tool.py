@@ -43,7 +43,7 @@ class HypothesisGenerationToolRunner(ToolRunner):
             merged["parameters"] = "{}"
         return ToolRunner.validate(self, merged)
 
-    def run(self, params: dict[str, Any]) -> ExecutionResult:
+    async def _arun(self, params: dict[str, Any]) -> ExecutionResult:
         params = dict(params)
         if "parameters" not in params:
             params["parameters"] = "{}"
@@ -71,20 +71,14 @@ class HypothesisGenerationToolRunner(ToolRunner):
                 params.get("dataset_description", question[:500]),
             ),
         }
-        loop = asyncio.new_event_loop()
         try:
-            asyncio.set_event_loop(loop)
-            dataset, meta = loop.run_until_complete(
-                run_hypothesis_generation_pipeline(
-                    input_data,
-                    parameters,
-                    default_model=params.get("model_name"),
-                )
+            dataset, meta = await run_hypothesis_generation_pipeline(
+                input_data,
+                parameters,
+                default_model=params.get("model_name"),
             )
         except Exception as e:
             return ExecutionResult(success=False, error=str(e))
-        finally:
-            loop.close()
         return ExecutionResult(
             success=True,
             data={
@@ -93,6 +87,20 @@ class HypothesisGenerationToolRunner(ToolRunner):
                 "success": True,
                 "error": None,
             },
+        )
+
+    def run(self, params: dict[str, Any]) -> ExecutionResult:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._arun(params))
+        return ExecutionResult(
+            success=False,
+            error=(
+                "hypothesis_generation tool cannot be run synchronously inside an "
+                "active event loop. Use canonical_registry.aexecute('hypothesis_generation', "
+                "params) or await ToolRunner._arun via async paths."
+            ),
         )
 
 
