@@ -26,6 +26,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerType,
     MCPToolSpec,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 def _validate_func_option(func: str) -> None:
@@ -150,13 +153,10 @@ class HISAT2Server(MCPServerBase):
                 method_params["index_basename"] = method_params.pop("index_base")
 
         try:
-            # Check if tool is available (for testing/development environments)
-            import shutil
-
             tool_name_check = "hisat2"
-            if not shutil.which(tool_name_check):
-                # Return mock success result for testing when tool is not available
-                return {
+            miss = response_if_executable_missing(
+                tool_name_check,
+                {
                     "success": True,
                     "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
@@ -165,8 +165,11 @@ class HISAT2Server(MCPServerBase):
                         method_params.get("output_file", f"mock_{operation}_output")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             return method(**method_params)

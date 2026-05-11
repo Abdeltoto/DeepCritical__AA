@@ -24,6 +24,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.tools import Tool
@@ -172,12 +175,9 @@ class BCFtoolsServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if bcftools is available (for testing/development environments)
-            import shutil
-
-            if not shutil.which("bcftools"):
-                # Return mock success result for testing when bcftools is not available
-                return {
+            miss = response_if_executable_missing(
+                "bcftools",
+                {
                     "success": True,
                     "command_executed": f"bcftools {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
@@ -186,8 +186,11 @@ class BCFtoolsServer(MCPServerBase):
                         method_params.get("output_file", f"mock_{operation}_output")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             return method(**method_params)
@@ -1693,5 +1696,10 @@ class BCFtoolsServer(MCPServerBase):
         }
 
 
-# Create server instance
-bcftools_server = BCFtoolsServer()
+def get_bcftools_server() -> BCFtoolsServer:
+    """Create a BCFtools server instance (lazy).
+
+    Avoid import-time side effects during unit test collection.
+    """
+
+    return BCFtoolsServer()

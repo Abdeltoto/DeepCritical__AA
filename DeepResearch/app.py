@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pydantic_graph import BaseNode, Edge, End, Graph, GraphRunContext
 
 from .agents import ExecutionHistory, ExecutorAgent, ParserAgent, PlannerAgent
 from .src.agents.agent_orchestrator import AgentOrchestrator
 from .src.agents.prime_executor import ExecutionContext, ToolExecutor
-from .src.agents.prime_parser import QueryParser, StructuredProblem
+from .src.agents.prime_parser import QueryParser, ScientificIntent, StructuredProblem
 from .src.agents.prime_planner import PlanGenerator, WorkflowDAG
 from .src.agents.workflow_orchestrator import (
     PrimaryWorkflowOrchestrator,
     WorkflowOrchestrationConfig,
 )
-from .src.datatypes.orchestrator import Orchestrator  # type: ignore
+from .src.datatypes.orchestrator import Orchestrator
 from .src.datatypes.workflow_orchestration import (
     AgentOrchestratorConfig,
     AgentRole,
@@ -37,6 +38,7 @@ from .src.datatypes.workflow_orchestration import (
     WorkflowType,
 )
 from .src.utils.execution_history import ExecutionHistory as PrimeExecutionHistory
+from .src.utils.model_registry import resolve_model_name
 from .src.utils.tool_registry import ToolRegistry
 
 # from .src.tools import bioinformatics_tools
@@ -86,6 +88,7 @@ class ResearchState:
     reasoning_results: list[ReasoningResult] = field(default_factory=list)
     judge_evaluations: dict[str, Any] = field(default_factory=dict)
     hypothesis_results: dict[str, Any] = field(default_factory=dict)
+    literature_review_results: dict[str, Any] = field(default_factory=dict)
     # Enhanced REACT architecture state
     app_configuration: AppConfiguration | None = None
     agent_orchestrator: AgentOrchestrator | None = None
@@ -98,7 +101,7 @@ class ResearchState:
 
 # --- Nodes ---
 @dataclass
-class Plan(BaseNode[ResearchState]):
+class Plan(BaseNode[ResearchState, None, None]):
     """Planning node for research workflow.
 
     This node analyzes the research question and determines the appropriate
@@ -111,7 +114,9 @@ class Plan(BaseNode[ResearchState]):
         self, ctx: GraphRunContext[ResearchState]
     ) -> (
         Search
+        | LiteratureReviewRun
         | HypothesisRun
+        | WorkflowPatternRun
         | PrimaryREACTWorkflow
         | EnhancedREACTWorkflow
         | PrepareChallenge
@@ -130,6 +135,17 @@ class Plan(BaseNode[ResearchState]):
             return EnhancedREACTWorkflow()
 
         flows_cfg = getattr(cfg, "flows", {})
+        literature_review_cfg = getattr(flows_cfg, "literature_review", None)
+        orchestration_cfg_early = getattr(cfg, "workflow_orchestration", None)
+        if getattr(literature_review_cfg or {}, "enabled", False):
+            if getattr(orchestration_cfg_early or {}, "enabled", False):
+                ctx.state.notes.append(
+                    "Literature review takes precedence over workflow_orchestration "
+                    "(both were enabled)"
+                )
+            ctx.state.notes.append("Literature review flow enabled")
+            return LiteratureReviewRun()
+
         hypothesis_generation_cfg = getattr(flows_cfg, "hypothesis_generation", None)
         hypothesis_testing_cfg = getattr(flows_cfg, "hypothesis_testing", None)
         if any(
@@ -140,6 +156,11 @@ class Plan(BaseNode[ResearchState]):
         ):
             ctx.state.notes.append("Hypothesis engine flow enabled")
             return HypothesisRun()
+
+        workflow_patterns_cfg = getattr(flows_cfg, "workflow_patterns", None)
+        if getattr(workflow_patterns_cfg or {}, "enabled", False):
+            ctx.state.notes.append("Workflow pattern flow enabled")
+            return WorkflowPatternRun()
 
         # Check if primary REACT workflow orchestration is enabled
         orchestration_cfg = getattr(cfg, "workflow_orchestration", None)
@@ -188,30 +209,58 @@ class Plan(BaseNode[ResearchState]):
             ctx.state.notes.append("DeepSearch flow enabled")
             return DSPlan()
 
-        # Default flow
+        # Default flow (async parity with MultiAgentOrchestrator)
         parser = ParserAgent()
         planner = PlannerAgent()
-        parsed = parser.parse(ctx.state.question)
-        plan = planner.plan(parsed)
+        parsed = await parser.parse_question(ctx.state.question)
+        plan = await planner.create_plan(parsed)
         ctx.state.full_plan = plan
         ctx.state.plan = [f"{s['tool']}" for s in plan]
         ctx.state.notes.append(f"Planned steps: {ctx.state.plan}")
         return Search()
 
 
+def _collect_orchestration_alerts(
+    result: dict[str, Any], orchestration_state: OrchestrationState
+) -> list[str]:
+    """Surface primary-run failures and quality-judge issues for user-facing reports."""
+    alerts: list[str] = []
+    if not result.get("success", True):
+        meta = result.get("execution_metadata") or {}
+        fk = meta.get("failure_kind")
+        err = result.get("error") or "Unknown error"
+        alerts.append(f"Primary run failed ({fk or 'unknown'}): {err}")
+    for ex in orchestration_state.completed_executions:
+        od = ex.output_data
+        if not isinstance(od, dict):
+            continue
+        wn = getattr(ex, "workflow_name", None) or "workflow"
+        if od.get("quality_judge_ok") is False:
+            msg = od.get("quality_judge_error") or "Quality judge reported failure"
+            alerts.append(f"[{wn}] {msg}")
+            continue
+        judge = od.get("judge")
+        if isinstance(judge, dict) and judge.get("success") is False:
+            msg = judge.get("error_message") or judge.get("feedback") or "Judge failed"
+            alerts.append(f"[{wn}] Judge: {msg}")
+    return alerts
+
+
 # --- Primary REACT Workflow Node ---
 @dataclass
-class PrimaryREACTWorkflow(BaseNode[ResearchState]):
+class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
+    ) -> Annotated[End[None], Edge(label="done")]:
         """Execute the primary REACT workflow with orchestration."""
         cfg = ctx.state.config
         orchestration_cfg = getattr(cfg, "workflow_orchestration", {})
 
         try:
             # Initialize orchestration configuration
-            orchestration_config = self._create_orchestration_config(orchestration_cfg)
+            orchestration_config = self._create_orchestration_config(
+                orchestration_cfg, cfg
+            )
             ctx.state.orchestration_config = orchestration_config
 
             # Create primary workflow orchestrator
@@ -237,6 +286,18 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
                     for exec in orchestrator.state.completed_executions
                 ]
 
+                for exec_result in orchestrator.state.completed_executions:
+                    od = exec_result.output_data
+                    if isinstance(od, dict):
+                        hdump = od.get("hypothesis_dataset")
+                        if isinstance(hdump, dict):
+                            try:
+                                ctx.state.hypothesis_datasets.append(
+                                    HypothesisDataset.model_validate(hdump)
+                                )
+                            except Exception:
+                                pass
+
                 # Extract multi-agent results
                 ctx.state.multi_agent_results = result.get("result", {})
 
@@ -250,20 +311,20 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
                     "Primary REACT workflow orchestration completed successfully"
                 )
 
-                return End(final_answer)
+                return End(None)
             error_msg = (
                 f"Primary REACT workflow failed: {result.get('error', 'Unknown error')}"
             )
             ctx.state.notes.append(error_msg)
-            return End(f"Error: {error_msg}")
+            return End(None)
 
         except Exception as e:
             error_msg = f"Primary REACT workflow orchestration failed: {e!s}"
             ctx.state.notes.append(error_msg)
-            return End(f"Error: {error_msg}")
+            return End(None)
 
     def _create_orchestration_config(
-        self, orchestration_cfg: dict[str, Any]
+        self, orchestration_cfg: dict[str, Any], root_cfg: Any | None = None
     ) -> WorkflowOrchestrationConfig:
         """Create orchestration configuration from Hydra config."""
         from .src.datatypes.workflow_orchestration import (
@@ -273,22 +334,27 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
             WorkflowConfig,
         )
 
+        orchestration_cfg = self._to_plain_config(orchestration_cfg)
+        primary_data = self._mapping_section(orchestration_cfg, "primary_workflow")
+
         # Create primary workflow config
         primary_workflow = WorkflowConfig(
-            workflow_type=WorkflowType.PRIMARY_REACT,
-            name="main_research_workflow",
-            enabled=True,
-            priority=10,
-            max_retries=3,
-            timeout=300.0,
-            parameters=orchestration_cfg.get("primary_workflow", {}).get(
-                "parameters", {}
+            workflow_type=WorkflowType(
+                primary_data.get("workflow_type", WorkflowType.PRIMARY_REACT.value)
             ),
+            name=primary_data.get("name", "main_research_workflow"),
+            enabled=primary_data.get("enabled", True),
+            priority=primary_data.get("priority", 10),
+            max_retries=primary_data.get("max_retries", 3),
+            timeout=primary_data.get("timeout", 300.0),
+            dependencies=primary_data.get("dependencies", []),
+            parameters=primary_data.get("parameters", {}),
+            output_format=primary_data.get("output_format", "default"),
         )
 
         # Create sub-workflow configs
         sub_workflows = []
-        for workflow_data in orchestration_cfg.get("sub_workflows", []):
+        for workflow_data in self._list_section(orchestration_cfg, "sub_workflows"):
             workflow_config = WorkflowConfig(
                 workflow_type=WorkflowType(
                     workflow_data.get("workflow_type", "rag_workflow")
@@ -298,13 +364,15 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
                 priority=workflow_data.get("priority", 0),
                 max_retries=workflow_data.get("max_retries", 3),
                 timeout=workflow_data.get("timeout", 120.0),
+                dependencies=workflow_data.get("dependencies", []),
                 parameters=workflow_data.get("parameters", {}),
+                output_format=workflow_data.get("output_format", "default"),
             )
             sub_workflows.append(workflow_config)
 
         # Create data loader configs
         data_loaders = []
-        for loader_data in orchestration_cfg.get("data_loaders", []):
+        for loader_data in self._list_section(orchestration_cfg, "data_loaders"):
             loader_config = DataLoaderConfig(
                 loader_type=DataLoaderType(
                     loader_data.get("loader_type", "document_loader")
@@ -322,17 +390,26 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
 
         # Create multi-agent system configs
         multi_agent_systems = []
-        for system_data in orchestration_cfg.get("multi_agent_systems", []):
+        for system_data in self._list_section(orchestration_cfg, "multi_agent_systems"):
             agents = []
             for agent_data in system_data.get("agents", []):
                 from .src.datatypes.workflow_orchestration import AgentConfig
 
+                role = AgentRole(agent_data.get("role", "executor"))
+                model_role = agent_data.get("model_role") or {
+                    AgentRole.SEARCH_AGENT: "search",
+                    AgentRole.RAG_AGENT: "rag",
+                    AgentRole.BIOINFORMATICS_AGENT: "bioinformatics_reasoning",
+                    AgentRole.EVALUATOR: "evaluator",
+                    AgentRole.JUDGE: "judge",
+                    AgentRole.CODE_EXECUTOR: "code_generation",
+                    AgentRole.ORCHESTRATOR_AGENT: "deep_agent",
+                }.get(role, role.value)
                 agent_config = AgentConfig(
                     agent_id=agent_data.get("agent_id", "unnamed_agent"),
-                    role=AgentRole(agent_data.get("role", "executor")),
-                    model_name=agent_data.get(
-                        "model_name", "anthropic:claude-sonnet-4-0"
-                    ),
+                    role=role,
+                    model_name=agent_data.get("model_name")
+                    or resolve_model_name(root_cfg, model_role),
                     system_prompt=agent_data.get("system_prompt"),
                     tools=agent_data.get("tools", []),
                     max_iterations=agent_data.get("max_iterations", 10),
@@ -359,11 +436,12 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
 
         # Create judge configs
         judges = []
-        for judge_data in orchestration_cfg.get("judges", []):
+        for judge_data in self._list_section(orchestration_cfg, "judges"):
             judge_config = JudgeConfig(
                 judge_id=judge_data.get("judge_id", "unnamed_judge"),
                 name=judge_data.get("name", "Unnamed Judge"),
-                model_name=judge_data.get("model_name", "anthropic:claude-sonnet-4-0"),
+                model_name=judge_data.get("model_name")
+                or resolve_model_name(root_cfg, judge_data.get("model_role", "judge")),
                 evaluation_criteria=judge_data.get(
                     "evaluation_criteria", ["quality", "accuracy"]
                 ),
@@ -387,6 +465,42 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
             enable_caching=orchestration_cfg.get("enable_caching", True),
         )
 
+    def _to_plain_config(self, value: Any) -> dict[str, Any]:
+        """Convert Hydra/OmegaConf config to a plain dictionary."""
+        if value is None:
+            return {}
+        if isinstance(value, DictConfig):
+            plain = OmegaConf.to_container(value, resolve=True)
+            if not isinstance(plain, dict):
+                return {}
+            return {str(k): v for k, v in plain.items()}
+        if isinstance(value, dict):
+            return {str(k): v for k, v in value.items()}
+        return {}
+
+    def _mapping_section(self, cfg: dict[str, Any], key: str) -> dict[str, Any]:
+        """Return a mapping section, unwrapping Hydra group nesting when present."""
+        section = cfg.get(key, {})
+        if isinstance(section, DictConfig):
+            section = OmegaConf.to_container(section, resolve=True)
+        if isinstance(section, dict):
+            nested = section.get(key)
+            if isinstance(nested, dict):
+                return {str(k): v for k, v in nested.items()}
+            return {str(k): v for k, v in section.items()}
+        return {}
+
+    def _list_section(self, cfg: dict[str, Any], key: str) -> list[dict[str, Any]]:
+        """Return a list section, supporting Hydra group nesting."""
+        section = cfg.get(key, [])
+        if isinstance(section, DictConfig):
+            section = OmegaConf.to_container(section, resolve=True)
+        if isinstance(section, dict):
+            section = section.get(key, [])
+        if not isinstance(section, list):
+            return []
+        return [item for item in section if isinstance(item, dict)]
+
     def _generate_comprehensive_output(
         self,
         question: str,
@@ -399,13 +513,32 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
             "",
             f"**Question:** {question}",
             "",
-            "## Execution Summary",
-            f"- **Status:** {'Success' if result['success'] else 'Failed'}",
-            f"- **Workflows Spawned:** {len(orchestration_state.active_executions) + len(orchestration_state.completed_executions)}",
-            f"- **Active Executions:** {len(orchestration_state.active_executions)}",
-            f"- **Completed Executions:** {len(orchestration_state.completed_executions)}",
-            "",
         ]
+        alerts = _collect_orchestration_alerts(result, orchestration_state)
+        if alerts:
+            output_parts.extend(["## Alerts", ""])
+            output_parts.extend(f"- {a}" for a in alerts)
+            output_parts.extend(["", ""])
+
+        em = result.get("execution_metadata") or {}
+        output_parts.extend(
+            [
+                "## Execution Summary",
+                f"- **Status:** {'Success' if result['success'] else 'Failed'}",
+            ]
+        )
+        if em.get("failure_kind"):
+            output_parts.append(f"- **Failure kind:** {em['failure_kind']}")
+        if not result.get("success") and result.get("error"):
+            output_parts.append(f"- **Error:** {result['error']}")
+        output_parts.extend(
+            [
+                f"- **Workflows Spawned:** {len(orchestration_state.active_executions) + len(orchestration_state.completed_executions)}",
+                f"- **Active Executions:** {len(orchestration_state.active_executions)}",
+                f"- **Completed Executions:** {len(orchestration_state.completed_executions)}",
+                "",
+            ]
+        )
 
         # Add workflow results
         if orchestration_state.completed_executions:
@@ -423,25 +556,46 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
                 )
 
                 if execution.output_data:
+                    od = execution.output_data
+                    od_display = (
+                        json.dumps(od, indent=2, default=str)
+                        if isinstance(od, dict)
+                        else str(od)
+                    )
                     output_parts.extend(
                         [
                             "**Output:**",
                             "```json",
-                            f"{execution.output_data}",
+                            od_display,
                             "```",
                             "",
                         ]
                     )
 
-        # Add multi-agent results
+        # Add multi-agent / primary workflow payload (dict with output, usage, etc.)
         if result.get("result"):
+            payload = result["result"]
+            if isinstance(payload, dict) and payload.get("output") is not None:
+                output_parts.extend(
+                    [
+                        "## Primary output",
+                        "",
+                        str(payload["output"]),
+                        "",
+                    ]
+                )
+            display = (
+                json.dumps(payload, indent=2, default=str)
+                if isinstance(payload, (dict, list))
+                else str(payload)
+            )
             output_parts.extend(
                 [
-                    "## Multi-Agent Coordination Results",
+                    "## Primary agent result (structured)",
                     "",
-                    "**Primary Agent Result:**",
+                    "**Payload:**",
                     "```json",
-                    f"{result['result']}",
+                    display,
                     "```",
                     "",
                 ]
@@ -470,10 +624,10 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState]):
 
 # --- Enhanced REACT Workflow Node ---
 @dataclass
-class EnhancedREACTWorkflow(BaseNode[ResearchState]):
+class EnhancedREACTWorkflow(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
+    ) -> Annotated[End[None], Edge(label="done")]:
         """Execute the enhanced REACT workflow with nested loops and subgraphs."""
         cfg = ctx.state.config
         app_mode = ctx.state.current_mode
@@ -512,25 +666,28 @@ class EnhancedREACTWorkflow(BaseNode[ResearchState]):
                     f"Enhanced REACT workflow ({app_mode.value if app_mode else 'unknown'}) completed successfully"
                 )
 
-                return End(final_answer)
+                return End(None)
             error_msg = f"Enhanced REACT workflow failed: {result.break_reason or 'Unknown error'}"
             ctx.state.notes.append(error_msg)
-            return End(f"Error: {error_msg}")
+            return End(None)
 
         except Exception as e:
             error_msg = f"Enhanced REACT workflow orchestration failed: {e!s}"
             ctx.state.notes.append(error_msg)
-            return End(f"Error: {error_msg}")
+            return End(None)
 
     def _create_app_configuration(
-        self, cfg: DictConfig, app_mode: AppMode
+        self, cfg: DictConfig | None, app_mode: AppMode | None
     ) -> AppConfiguration:
         """Create app configuration from Hydra config."""
+        cfg = cfg or DictConfig({})
+        app_mode = app_mode or AppMode.SINGLE_REACT
         # Create primary orchestrator config
         primary_orchestrator = AgentOrchestratorConfig(
             orchestrator_id="primary_orchestrator",
             agent_role=AgentRole.ORCHESTRATOR_AGENT,
-            model_name=cfg.get("model_name", "anthropic:claude-sonnet-4-0"),
+            model_name=cfg.get("model_name")
+            or resolve_model_name(cfg, cfg.get("model_role", "deep_agent")),
             max_nested_loops=cfg.get("max_nested_loops", 5),
             coordination_strategy=cfg.get("coordination_strategy", "collaborative"),
             can_spawn_subgraphs=cfg.get("can_spawn_subgraphs", True),
@@ -721,7 +878,7 @@ class EnhancedREACTWorkflow(BaseNode[ResearchState]):
 
 
 @dataclass
-class Search(BaseNode[ResearchState]):
+class Search(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> Analyze:
         history = ExecutionHistory()
         plan = getattr(ctx.state, "full_plan", []) or []
@@ -735,7 +892,7 @@ class Search(BaseNode[ResearchState]):
 
 
 @dataclass
-class Analyze(BaseNode[ResearchState]):
+class Analyze(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> Synthesize:
         history = ctx.state.execution_results.get("history")
         n = len(history.items) if history else 0
@@ -744,10 +901,10 @@ class Analyze(BaseNode[ResearchState]):
 
 
 @dataclass
-class Synthesize(BaseNode[ResearchState]):
+class Synthesize(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
+    ) -> Annotated[End[None], Edge(label="done")]:
         bag = ctx.state.execution_results.get("bag") or {}
         final = (
             bag.get("final")
@@ -759,12 +916,12 @@ class Synthesize(BaseNode[ResearchState]):
             final = "No summary available."
         answer = f"Q: {ctx.state.question}\n{final}"
         ctx.state.answers.append(answer)
-        return End(answer)
+        return End(None)
 
 
 # --- Challenge-specific nodes ---
 @dataclass
-class PrepareChallenge(BaseNode[ResearchState]):
+class PrepareChallenge(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> RunChallenge:
         ch = getattr(ctx.state.config, "challenge", None) if ctx.state.config else None
         if ch:
@@ -775,7 +932,7 @@ class PrepareChallenge(BaseNode[ResearchState]):
 
 
 @dataclass
-class RunChallenge(BaseNode[ResearchState]):
+class RunChallenge(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> EvaluateChallenge:
         ctx.state.notes.append(
             "Run: release material, collect methods/answers (placeholder)"
@@ -784,7 +941,7 @@ class RunChallenge(BaseNode[ResearchState]):
 
 
 @dataclass
-class EvaluateChallenge(BaseNode[ResearchState]):
+class EvaluateChallenge(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> Synthesize:
         ctx.state.notes.append(
             "Evaluate: participant cross-assessment, expert review, pilot AI (placeholder)"
@@ -794,7 +951,7 @@ class EvaluateChallenge(BaseNode[ResearchState]):
 
 # --- DeepSearch flow nodes (replicate example/jina-ai/src agent prompts and flow structure at high level) ---
 @dataclass
-class DSPlan(BaseNode[ResearchState]):
+class DSPlan(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> DSExecute:
         # Orchestrate plan selection based on enabled subflows
         flows_cfg = getattr(ctx.state.config, "flows", {})
@@ -814,7 +971,7 @@ class DSPlan(BaseNode[ResearchState]):
 
 
 @dataclass
-class DSExecute(BaseNode[ResearchState]):
+class DSExecute(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> DSAnalyze:
         history = ExecutionHistory()
         plan = getattr(ctx.state, "full_plan", []) or []
@@ -828,7 +985,7 @@ class DSExecute(BaseNode[ResearchState]):
 
 
 @dataclass
-class DSAnalyze(BaseNode[ResearchState]):
+class DSAnalyze(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> DSSynthesize:
         history = ctx.state.execution_results.get("history")
         n = len(history.items) if history else 0
@@ -837,10 +994,10 @@ class DSAnalyze(BaseNode[ResearchState]):
 
 
 @dataclass
-class DSSynthesize(BaseNode[ResearchState]):
+class DSSynthesize(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
+    ) -> Annotated[End[None], Edge(label="done")]:
         bag = ctx.state.execution_results.get("bag") or {}
         final = (
             bag.get("final")
@@ -851,10 +1008,187 @@ class DSSynthesize(BaseNode[ResearchState]):
             final = "No result."
         answer = f"Q: {ctx.state.question}\n{final}"
         ctx.state.answers.append(answer)
-        return End(answer)
+        return End(None)
+
+
+# --- Literature review flow nodes ---
+@dataclass
+class LiteratureReviewRun(BaseNode[ResearchState]):
+    async def run(
+        self, ctx: GraphRunContext[ResearchState]
+    ) -> Annotated[End[str], Edge(label="done")]:
+        from .src.statemachines.literature_review_workflow import (
+            run_literature_review_workflow,
+        )
+
+        question = ctx.state.question
+        cfg = ctx.state.config
+
+        ctx.state.notes.append("Starting literature review workflow")
+
+        try:
+            result = await run_literature_review_workflow(question, cfg)
+            ctx.state.literature_review_results = result
+            ctx.state.execution_results["literature_review"] = result
+
+            status = result.get("status")
+            error_items = [
+                str(item)
+                for item in (result.get("errors") or [])
+                if isinstance(item, str) and item.strip()
+            ]
+            error_summary = "; ".join(error_items) or str(
+                result.get("error") or "Unknown error"
+            )
+            final_answer = result.get("markdown_report")
+            if not final_answer:
+                if status == "success":
+                    final_answer = "Literature review completed."
+                else:
+                    final_answer = f"Literature review workflow failed: {error_summary}"
+
+            ctx.state.answers.append(final_answer)
+            if status == "success":
+                ctx.state.notes.append(
+                    "Literature review workflow completed successfully"
+                )
+            else:
+                ctx.state.notes.append(
+                    "Literature review workflow completed with failure status: "
+                    f"{error_summary}"
+                )
+            return End(final_answer)
+        except Exception as e:
+            error_msg = f"Literature review workflow failed: {e!s}"
+            ctx.state.notes.append(error_msg)
+            ctx.state.answers.append(f"Error: {error_msg}")
+            return End(f"Error: {error_msg}")
 
 
 # --- Hypothesis flow nodes ---
+@dataclass
+class WorkflowPatternRun(BaseNode[ResearchState]):
+    async def run(
+        self, ctx: GraphRunContext[ResearchState]
+    ) -> Annotated[End[str], Edge(label="done")]:
+        from omegaconf import OmegaConf
+
+        from .src.datatypes.agents import AgentType
+        from .src.datatypes.workflow_patterns import InteractionPattern
+        from .src.statemachines.workflow_pattern_statemachines import (
+            run_pattern_workflow,
+        )
+        from .src.workflow_patterns import agent_registry
+
+        cfg = ctx.state.config
+        flow_cfg = getattr(getattr(cfg, "flows", {}), "workflow_patterns", {})
+
+        try:
+            pattern = InteractionPattern(
+                getattr(flow_cfg, "pattern", InteractionPattern.COLLABORATIVE.value)
+            )
+            agent_ids, agent_types = self._parse_agents(flow_cfg, AgentType)
+            executors = self._resolve_executors(
+                flow_cfg, agent_ids, agent_registry, ctx.state.question
+            )
+            config_dict = OmegaConf.to_container(flow_cfg, resolve=True)
+            workflow_config = OmegaConf.create(config_dict or {})
+            if not isinstance(workflow_config, DictConfig):
+                workflow_config = OmegaConf.create({})
+            output = await run_pattern_workflow(
+                question=ctx.state.question,
+                pattern=pattern,
+                agents=agent_ids,
+                agent_types=agent_types,
+                agent_executors=executors,
+                config=workflow_config,
+            )
+            success = not output.startswith("Workflow Pattern Execution Failed")
+            ctx.state.execution_results["workflow_patterns"] = {
+                "pattern": pattern.value,
+                "agents": agent_ids,
+                "success": success,
+                "output": output,
+            }
+            ctx.state.answers.append(output)
+            if success:
+                ctx.state.notes.append(f"Workflow pattern completed: {pattern.value}")
+            else:
+                ctx.state.notes.append(f"Workflow pattern failed: {pattern.value}")
+            return End(output)
+        except Exception as e:
+            error_msg = f"Workflow pattern flow failed: {e!s}"
+            ctx.state.notes.append(error_msg)
+            ctx.state.answers.append(f"Error: {error_msg}")
+            return End(f"Error: {error_msg}")
+
+    def _parse_agents(
+        self, flow_cfg: Any, agent_type_cls: Any
+    ) -> tuple[list[str], dict[str, Any]]:
+        agents_cfg = getattr(flow_cfg, "agents", None) or []
+        if not agents_cfg:
+            msg = "flows.workflow_patterns.agents must contain at least one agent"
+            raise ValueError(msg)
+
+        agent_ids: list[str] = []
+        agent_types: dict[str, Any] = {}
+        for item in agents_cfg:
+            if isinstance(item, dict):
+                agent_id = str(item.get("id") or item.get("agent_id") or "")
+                type_value = item.get("type") or item.get("agent_type")
+            else:
+                agent_id = str(
+                    getattr(item, "id", None) or getattr(item, "agent_id", None) or ""
+                )
+                type_value = getattr(item, "type", None) or getattr(
+                    item, "agent_type", None
+                )
+            if not agent_id:
+                msg = "Each workflow pattern agent must define id"
+                raise ValueError(msg)
+            agent_ids.append(agent_id)
+            agent_types[agent_id] = agent_type_cls(
+                type_value or agent_type_cls.EXECUTOR.value
+            )
+        return agent_ids, agent_types
+
+    def _resolve_executors(
+        self,
+        flow_cfg: Any,
+        agent_ids: list[str],
+        agent_registry: Any,
+        question: str,
+    ) -> dict[str, Any]:
+        development_mock = bool(getattr(flow_cfg, "development_mock", False))
+        configured = getattr(flow_cfg, "agent_executors", {}) or {}
+        executors: dict[str, Any] = {}
+
+        for agent_id in agent_ids:
+            executor_id = configured.get(agent_id, agent_id)
+            executor = agent_registry.get(str(executor_id))
+            if executor:
+                executors[agent_id] = executor
+            elif development_mock:
+                executors[agent_id] = self._development_executor(agent_id, question)
+            else:
+                msg = (
+                    f"No registered executor found for workflow pattern agent "
+                    f"{agent_id}: {executor_id}"
+                )
+                raise ValueError(msg)
+        return executors
+
+    def _development_executor(self, agent_id: str, question: str):
+        async def executor(messages: list[Any], _state: Any) -> dict[str, Any]:
+            return {
+                "answer": question,
+                "result": "Development workflow-pattern result",
+                "messages_processed": len(messages),
+            }
+
+        return executor
+
+
 @dataclass
 class HypothesisRun(BaseNode[ResearchState]):
     async def run(
@@ -916,7 +1250,7 @@ class HypothesisRun(BaseNode[ResearchState]):
 
 # --- PRIME flow nodes ---
 @dataclass
-class PrimeParse(BaseNode[ResearchState]):
+class PrimeParse(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> PrimePlan:
         # Parse the query using PRIME Query Parser
         parser = QueryParser()
@@ -929,7 +1263,7 @@ class PrimeParse(BaseNode[ResearchState]):
 
 
 @dataclass
-class PrimePlan(BaseNode[ResearchState]):
+class PrimePlan(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> PrimeExecute:
         # Generate workflow using PRIME Plan Generator
         planner = PlanGenerator()
@@ -953,7 +1287,7 @@ class PrimePlan(BaseNode[ResearchState]):
 
 
 @dataclass
-class PrimeExecute(BaseNode[ResearchState]):
+class PrimeExecute(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> PrimeEvaluate:
         # Execute workflow using PRIME Tool Executor
         cfg = ctx.state.config
@@ -988,13 +1322,23 @@ class PrimeExecute(BaseNode[ResearchState]):
 
 
 @dataclass
-class PrimeEvaluate(BaseNode[ResearchState]):
+class PrimeEvaluate(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
+    ) -> Annotated[End[None], Edge(label="done")]:
         # Evaluate results and generate final answer
         results = ctx.state.execution_results
         problem = ctx.state.structured_problem
+        if problem is None:
+            problem = StructuredProblem(
+                intent=ScientificIntent.CLASSIFICATION,
+                input_data={"description": ctx.state.question},
+                output_requirements={"answer": "comprehensive_response"},
+                constraints=[],
+                success_criteria=["complete_answer"],
+                domain="general",
+                complexity="simple",
+            )
 
         if results["success"]:
             # Extract key results from data bag
@@ -1008,7 +1352,7 @@ class PrimeEvaluate(BaseNode[ResearchState]):
             answer = f"PRIME Analysis Incomplete\n\nQ: {ctx.state.question}\n\nFailed steps: {failed_steps}\n\nPlease review the execution history for details."
 
         ctx.state.answers.append(answer)
-        return End(answer)
+        return End(None)
 
     def _extract_summary(
         self, data_bag: dict[str, Any], problem: StructuredProblem
@@ -1071,7 +1415,7 @@ class PrimeEvaluate(BaseNode[ResearchState]):
 
 # --- Bioinformatics flow nodes ---
 @dataclass
-class BioinformaticsParse(BaseNode[ResearchState]):
+class BioinformaticsParse(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> BioinformaticsFuse:
         # Import here to avoid circular imports
         from .src.statemachines.bioinformatics_workflow import (
@@ -1098,22 +1442,20 @@ class BioinformaticsParse(BaseNode[ResearchState]):
 
 
 @dataclass
-class BioinformaticsFuse(BaseNode[ResearchState]):
+class BioinformaticsFuse(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
-        # The bioinformatics workflow is already complete, just return the result
-        if ctx.state.answers:
-            return End(ctx.state.answers[-1])
-        return End("Bioinformatics analysis completed.")
+    ) -> Annotated[End[None], Edge(label="done")]:
+        # The bioinformatics workflow is already complete; output is in state.
+        return End(None)
 
 
 # --- RAG flow nodes ---
 @dataclass
-class RAGParse(BaseNode[ResearchState]):
+class RAGParse(BaseNode[ResearchState, None, None]):
     async def run(self, ctx: GraphRunContext[ResearchState]) -> RAGExecute:
         # Import here to avoid circular imports
-        from .src.statemachines.rag_workflow import run_rag_workflow
+        from .src.statemachines.rag_workflow import run_rag_workflow_async
 
         question = ctx.state.question
         cfg = ctx.state.config
@@ -1123,7 +1465,7 @@ class RAGParse(BaseNode[ResearchState]):
         # Run the complete RAG workflow
         try:
             cfg_non_null = cfg or DictConfig({})
-            final_answer = run_rag_workflow(question, cfg_non_null)
+            final_answer = await run_rag_workflow_async(question, cfg_non_null)
             ctx.state.answers.append(final_answer)
             ctx.state.notes.append("RAG workflow completed successfully")
         except Exception as e:
@@ -1135,19 +1477,16 @@ class RAGParse(BaseNode[ResearchState]):
 
 
 @dataclass
-class RAGExecute(BaseNode[ResearchState]):
+class RAGExecute(BaseNode[ResearchState, None, None]):
     async def run(
         self, ctx: GraphRunContext[ResearchState]
-    ) -> Annotated[End[str], Edge(label="done")]:
-        # The RAG workflow is already complete, just return the result
-        if ctx.state.answers:
-            return End(ctx.state.answers[-1])
-        return End("RAG analysis completed.")
+    ) -> Annotated[End[None], Edge(label="done")]:
+        # The RAG workflow is already complete; output is in state.
+        return End(None)
 
 
 def run_graph(question: str, cfg: DictConfig) -> str:
     state = ResearchState(question=question, config=cfg)
-    # Include all nodes in runtime graph - instantiate them
     nodes = (
         Plan(),
         Search(),
@@ -1166,28 +1505,34 @@ def run_graph(question: str, cfg: DictConfig) -> str:
         PrimeEvaluate(),
         BioinformaticsParse(),
         BioinformaticsFuse(),
+        LiteratureReviewRun(),
         HypothesisRun(),
+        WorkflowPatternRun(),
         RAGParse(),
         RAGExecute(),
         PrimaryREACTWorkflow(),
         EnhancedREACTWorkflow(),
     )
-    g = Graph(nodes=nodes)
+    g = Graph(nodes=nodes, state_type=ResearchState)
     # Run the graph starting from Plan node
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(g.run(Plan(), state=state, deps=None))  # type: ignore
+        loop.run_until_complete(g.run(Plan(), state=state, deps=None))
     finally:
         loop.close()
         asyncio.set_event_loop(None)
-    return (result.output or "") if hasattr(result, "output") else ""
+    if state.answers:
+        return state.answers[-1]
+    return ""
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     question = cfg.get("question", "What is deep research?")
-    run_graph(question, cfg)
+    output = run_graph(question, cfg)
+    if output:
+        print(output)
 
 
 if __name__ == "__main__":

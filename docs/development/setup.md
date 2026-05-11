@@ -4,7 +4,7 @@ This guide covers setting up a development environment for DeepCritical.
 
 ## Prerequisites
 
-- **Python 3.10+**: Required for all dependencies
+- **Python 3.11+**: Required for all dependencies
 - **Git**: For version control and cloning repositories
 - **uv** (Recommended): Fast Python package manager
 - **Make**: For running build commands (optional but recommended)
@@ -213,7 +213,10 @@ For RAG workflows:
 ```bash
 # Install and run ChromaDB
 pip install chromadb
-chroma run --host 0.0.0.0 --port 8000
+chroma run --host 127.0.0.1 --port 8000
+
+# Use --host 0.0.0.0 only when you deliberately want to expose ChromaDB
+# outside localhost, and pair that with private-network or firewall controls.
 
 # Or use Qdrant
 pip install qdrant-client

@@ -8,7 +8,7 @@ vector searches in Neo4j databases with various filtering and display options.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from neo4j import GraphDatabase
 
@@ -82,7 +82,7 @@ def search_publications(
         """
 
         # Add filters
-        params = {"top_k": top_k}
+        params: dict[str, Any] = {"top_k": top_k}
 
         if year_filter:
             cypher_query += " AND toInteger(p.year) >= $year_filter"
@@ -174,7 +174,7 @@ def search_documents(
             WHERE d.content IS NOT NULL
         """
 
-        params = {"top_k": top_k}
+        params: dict[str, Any] = {"top_k": top_k}
 
         # Add content filter
         if content_filter:

@@ -29,12 +29,12 @@ repos:
 
 
 
-#  Type checking with ty (disabled due to issues)
+# Type checking with ty (non-blocking: full DeepResearch package has a known backlog; still prints diagnostics)
   - repo: local
     hooks:
       - id: ty-check
         name: ty type check
-        entry: uvx ty check
+        entry: uv run ty check DeepResearch --exit-zero
         language: system
         files: \.py$
         pass_filenames: false
@@ -65,6 +65,16 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
+
+  # Optional Bun typecheck for OpenTUI demo (skipped when bun is absent)
+  - repo: local
+    hooks:
+      - id: tui-typecheck
+        name: TUI typecheck (optional bun)
+        entry: uv run python scripts/pre_commit_tui_typecheck.py
+        language: system
+        pass_filenames: false
+        always_run: true
 
   # Documentation build check
   - repo: local

@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 
 from DeepResearch.src.datatypes.bioinformatics import PubMedPaper
 from DeepResearch.src.tools.bioinformatics_tools import (
+    PubMedRetrieverOutcome,
     _build_paper,
     _extract_text_from_bioc,
     _get_fulltext,
@@ -81,7 +82,10 @@ def setup_mock_requests(requests_mock):
 def test_pubmed_paper_retriever_success(requests_mock):
     """Test successful retrieval of papers."""
     setup_mock_requests(requests_mock)
-    papers = pubmed_paper_retriever("test query")
+    outcome = pubmed_paper_retriever("test query")
+    assert isinstance(outcome, PubMedRetrieverOutcome)
+    assert outcome.error is None
+    papers = outcome.papers
     assert len(papers) == 2
     assert papers[0].pmid == "12345"
     assert papers[0].title == "Test Paper 1"
@@ -95,8 +99,9 @@ def test_pubmed_paper_retriever_api_error(requests_mock):
         "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
         status_code=500,
     )
-    papers = pubmed_paper_retriever("test query")
-    assert len(papers) == 0
+    outcome = pubmed_paper_retriever("test query")
+    assert outcome.error is not None
+    assert not outcome.papers
 
 
 @pytest.mark.usefixtures("disable_ratelimiter")
@@ -190,7 +195,7 @@ def test_build_paper(monkeypatch):
     assert paper.title == "Built Paper"
     assert paper.abstract == "Abstract of built paper."
     assert paper.is_open_access
-    assert paper.publication_date == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert paper.publication_date == datetime(2025, 1, 1, tzinfo=UTC)
 
 
 def test_build_paper_no_metadata(monkeypatch):

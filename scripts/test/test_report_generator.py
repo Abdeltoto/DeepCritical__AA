@@ -9,7 +9,7 @@ and benchmarking data.
 import argparse
 import json
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +115,7 @@ def generate_html_report(
 <body>
     <div class="header">
         <h1>DeepCritical Test Report</h1>
-        <p>Generated on: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}</p>
+        <p>Generated on: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}</p>
     </div>
 
     <div class="summary">

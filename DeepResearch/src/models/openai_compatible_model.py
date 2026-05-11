@@ -107,7 +107,7 @@ class OpenAICompatibleModel(OpenAIChatModel):
 
             # Validate using Pydantic model
             try:
-                validated_config = LLMModelConfig(**config_dict)  # type: ignore
+                validated_config = LLMModelConfig(**config_dict)
             except Exception as e:
                 msg = f"Invalid LLM model configuration: {e}"
                 raise ValueError(msg)

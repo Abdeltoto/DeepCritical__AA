@@ -23,7 +23,7 @@ This project adheres to a code of conduct. By participating, you are expected to
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
 - Git
 
@@ -150,11 +150,11 @@ uv run ruff check .
 uv run ruff format --check .
 
 
-# Run type checking
-uvx ty check
+# Run type checking (uses the project-pinned `ty` version from the dev group)
+uv run ty check DeepResearch
 
 # Run all quality checks
-uv run ruff check . && uv run ruff format --check . && uvx ty check
+uv run ruff check . && uv run ruff format --check . && uv run ty check DeepResearch
 
 # Show all available commands
 make help
@@ -281,8 +281,8 @@ uv run ruff check .
 # Format code (Ruff)
 uv run ruff format .
 
-# Check type annotations
-uvx ty check
+# Check type annotations (uses the project-pinned `ty` version from the dev group)
+uv run ty check DeepResearch
 
 # Auto-fix linting issues
 uv run ruff check . --fix

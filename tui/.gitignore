@@ -1,0 +1,5 @@
+node_modules/
+.bun/
+.env
+tui-config.json
+hypothesis_runs/

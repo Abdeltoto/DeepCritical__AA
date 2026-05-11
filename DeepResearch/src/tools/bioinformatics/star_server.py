@@ -21,6 +21,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerType,
     MCPToolSpec,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai import RunContext
@@ -153,13 +156,13 @@ class STARServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if tool is available (for testing/development environments)
-            import shutil
-
             tool_name_check = "STAR"
-            if not shutil.which(tool_name_check):
-                # Return mock success result for testing when tool is not available
-                return self._mock_result(operation, method_params)
+            miss = response_if_executable_missing(
+                tool_name_check,
+                self._mock_result(operation, method_params),
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             result = method(**method_params)

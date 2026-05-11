@@ -37,6 +37,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class Bowtie2Server(MCPServerBase):
@@ -779,12 +782,9 @@ class Bowtie2Server(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if bowtie2 is available (for testing/development environments)
-            import shutil
-
-            if not shutil.which("bowtie2"):
-                # Return mock success result for testing when bowtie2 is not available
-                return {
+            miss = response_if_executable_missing(
+                "bowtie2",
+                {
                     "success": True,
                     "command_executed": f"bowtie2 {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
@@ -793,8 +793,11 @@ class Bowtie2Server(MCPServerBase):
                         method_params.get("output_file", f"mock_{operation}_output.sam")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
-                }
+                    "mock": True,
+                },
+            )
+            if miss is not None:
+                return miss
 
             # Call the appropriate method
             return method(**method_params)
@@ -1351,5 +1354,10 @@ class Bowtie2Server(MCPServerBase):
         }
 
 
-# Create server instance
-bowtie2_server = Bowtie2Server()
+def get_bowtie2_server() -> Bowtie2Server:
+    """Create a Bowtie2 server instance (lazy).
+
+    Avoid import-time side effects during unit test collection.
+    """
+
+    return Bowtie2Server()

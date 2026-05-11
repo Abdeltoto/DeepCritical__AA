@@ -35,7 +35,7 @@ class WebSearchTool(ToolRunner):
     def __init__(self):
         super().__init__(
             ToolSpec(
-                name="web_search",
+                name="web_search_placeholder",
                 description="Perform a web search and return synthetic snippets (placeholder).",
                 inputs={"query": "TEXT"},
                 outputs={"results": "TEXT"},
@@ -267,7 +267,7 @@ class WorkflowStepTool(ToolRunner):
         )
 
 
-registry.register("web_search", WebSearchTool)
+registry.register("web_search_placeholder", WebSearchTool)
 registry.register("read", ReadTool)
 registry.register("finalize", FinalizeTool)
 registry.register("references", ReferencesTool)

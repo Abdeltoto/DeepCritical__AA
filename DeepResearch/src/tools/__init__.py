@@ -11,32 +11,42 @@ from typing import Any
 
 _DEFAULT_REGISTRY_MODULES = (
     "analytics_tools",
+    "bioinfomcp_catalog",
     "bioinformatics_tools",
+    "deep_agent_tools",
     "deepsearch_tools",
     "deepsearch_workflow_tool",
     "docker_sandbox",
     "hypothesis_tools",
     "integrated_search_tools",
+    "literature_review_tools",
+    "mgrep",
     "mock_tools",
     "openmm_tools",
     "pyd_ai_tools",
     "websearch_tools",
+    "workflow_pattern_tools",
     "workflow_tools",
 )
 
 _SUBMODULE_EXPORTS = {
     "analytics_tools",
+    "bioinfomcp_catalog",
     "bioinformatics_tools",
+    "deep_agent_tools",
     "code_sandbox",
     "deepsearch_tools",
     "deepsearch_workflow_tool",
     "docker_sandbox",
     "hypothesis_tools",
     "integrated_search_tools",
+    "literature_review_tools",
+    "mgrep",
     "mock_tools",
     "openmm_tools",
     "pyd_ai_tools",
     "websearch_tools",
+    "workflow_pattern_tools",
     "workflow_tools",
 }
 
@@ -44,12 +54,39 @@ _CLASS_EXPORTS = {
     "ChunkedSearchTool": ("websearch_tools", "ChunkedSearchTool"),
     "DeepSearchTool": ("deepsearch_tools", "DeepSearchTool"),
     "GOAnnotationTool": ("bioinformatics_tools", "GOAnnotationTool"),
+    "LiteratureEvidenceAppraisalTool": (
+        "literature_review_tools",
+        "LiteratureEvidenceAppraisalTool",
+    ),
+    "LiteratureRetrievalTool": (
+        "literature_review_tools",
+        "LiteratureRetrievalTool",
+    ),
+    "LiteratureSearchPlanningTool": (
+        "literature_review_tools",
+        "LiteratureSearchPlanningTool",
+    ),
+    "LiteratureSourceCurationTool": (
+        "literature_review_tools",
+        "LiteratureSourceCurationTool",
+    ),
+    "LiteratureSynthesisTool": (
+        "literature_review_tools",
+        "LiteratureSynthesisTool",
+    ),
+    "MgrepSearchTool": ("mgrep", "MgrepSearchTool"),
     "PubMedRetrievalTool": ("bioinformatics_tools", "PubMedRetrievalTool"),
     "RAGSearchTool": ("integrated_search_tools", "RAGSearchTool"),
     "WebSearchTool": ("websearch_tools", "WebSearchTool"),
 }
 
 _registry_state = {"bootstrapped": False}
+
+
+def bootstrap_default_tools() -> None:
+    """Populate the canonical registry with bundled tools (same as lazy ``tools.registry``)."""
+
+    _ensure_default_registrations()
 
 
 def _ensure_default_registrations() -> None:
@@ -87,21 +124,32 @@ __all__ = [
     "ChunkedSearchTool",
     "DeepSearchTool",
     "GOAnnotationTool",
+    "LiteratureEvidenceAppraisalTool",
+    "LiteratureRetrievalTool",
+    "LiteratureSearchPlanningTool",
+    "LiteratureSourceCurationTool",
+    "LiteratureSynthesisTool",
+    "MgrepSearchTool",
     "PubMedRetrievalTool",
     "RAGSearchTool",
     "WebSearchTool",
     "analytics_tools",
+    "bioinfomcp_catalog",
     "bioinformatics_tools",
     "code_sandbox",
+    "deep_agent_tools",
     "deepsearch_tools",
     "deepsearch_workflow_tool",
     "docker_sandbox",
     "hypothesis_tools",
     "integrated_search_tools",
+    "literature_review_tools",
+    "mgrep",
     "mock_tools",
     "openmm_tools",
     "pyd_ai_tools",
     "registry",
     "websearch_tools",
+    "workflow_pattern_tools",
     "workflow_tools",
 ]

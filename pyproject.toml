@@ -3,16 +3,18 @@ name = "deepcritical"
 version = "0.1.0"
 description = "Hydra-configured, Pydantic Graph-based deep research workflow"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
   { name = "DeepCritical", email = "noreply@example.com" }
 ]
 dependencies = [
+  "anthropic>=0.40.0",
   "beautifulsoup4>=4.14.2",
   "gradio>=5.47.2",
   "hydra-core>=1.3.2",
   "limits>=5.6.0",
+  "logfire-api",
   "mkdocs>=1.6.1",
   "mkdocs-git-revision-date-localized-plugin>=1.4.7",
   "mkdocs-material>=9.6.21",
@@ -32,8 +34,14 @@ dependencies = [
   "neo4j>=6.0.2",
   "sentence-transformers>=5.1.1",
   "numpy>=2.2.6",
+  "pathspec>=0.12.1",
   "faiss-cpu>=1.7.4",
   "openmm>=8.2.0",
+  "chromadb>=1.5.8",
+  "asyncpg>=0.31.0",
+  "pymilvus>=2.4.0",
+  "pinecone>=5.0.0",
+  "aiohttp>=3.12.15",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +58,11 @@ dev = [
 [project.scripts]
 deepresearch = "DeepResearch.app:main"
 deepresearch-hypothesis = "DeepResearch.hypothesis_app:main"
+deepresearch-literature-review = "DeepResearch.literature_review_app:main"
+deepresearch-llm-hypothesis = "DeepResearch.scripts.run_llm_hypothesis_pipeline:main"
+deepresearch-literature-pipeline = "DeepResearch.scripts.run_literature_review_pipeline:main"
+deepresearch-hypothesis-literature = "DeepResearch.scripts.run_hypothesis_literature_pipeline:main"
+deepresearch-upload-dataset = "DeepResearch.scripts.upload_dataset_repository:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -91,8 +104,8 @@ exclude = [
 line-length = 88
 indent-width = 4
 
-# Assume Python 3.10+
-target-version = "py310"
+# Assume Python 3.11+
+target-version = "py311"
 
 [tool.ruff.lint]
 # Enable only essential linting rules to avoid conflicts
@@ -193,6 +206,11 @@ unfixable = []
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+[tool.ruff.lint.per-file-ignores]
+"DeepResearch/src/agents/deep_agent_implementations.py" = ["N805"]
+"DeepResearch/src/prompts/deep_agent_graph.py" = ["N805"]
+"DeepResearch/src/tools/deep_agent_tools.py" = ["N805"]
+
 [tool.ruff.format]
 # Like Black, use double quotes for strings.
 quote-style = "double"
@@ -214,6 +232,10 @@ docstring-code-format = false
 # docstrings.
 docstring-code-line-length = "dynamic"
 
+[tool.ty.analysis]
+# Stubs for Pydantic AI / Graph are stricter than runtime; avoid false positives on Agent/Graph usage.
+replace-imports-with-any = ["pydantic_ai.**", "pydantic_graph.**"]
+
 [dependency-groups]
 dev = [
   "ruff>=0.14.0",
@@ -221,7 +243,7 @@ dev = [
   "pytest-asyncio>=0.21.0",
   "pytest-cov>=4.0.0",
   "bandit>=1.7.0",
-  "ty>=0.0.1a21",
+  "ty>=0.0.34",
   "mkdocs>=1.5.0",
   "mkdocs-material>=9.4.0",
   "mkdocs-mermaid2-plugin>=1.1.0",

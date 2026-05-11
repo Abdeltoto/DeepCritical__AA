@@ -8,8 +8,12 @@ This module defines Pydantic models for configuring various LLM providers
 from __future__ import annotations
 
 from enum import Enum
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Default model string for pydantic-ai Agent(model=...); configs override via Hydra.
+DEFAULT_PYDANTIC_AI_MODEL: Final[str] = "anthropic:claude-sonnet-4-0"
 
 
 class LLMProvider(str, Enum):

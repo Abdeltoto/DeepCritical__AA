@@ -28,6 +28,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
 )
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
+)
 
 
 class BEDToolsServer(MCPServerBase):
@@ -164,20 +167,20 @@ class BEDToolsServer(MCPServerBase):
         for b_file in b_files:
             cmd.extend(["-b", b_file])
 
-        # Check if bedtools is available (for testing/development environments)
-        import shutil
-
-        if not shutil.which("bedtools"):
-            # Return mock success result for testing when bedtools is not available
-            return {
+        miss = response_if_executable_missing(
+            "bedtools",
+            {
                 "success": True,
                 "command_executed": "bedtools intersect [mock - tool not available]",
                 "stdout": "Mock output for intersect operation",
                 "stderr": "",
                 "output_files": [output_file] if output_file else [],
                 "exit_code": 0,
-                "mock": True,  # Indicate this is a mock result
-            }
+                "mock": True,
+            },
+        )
+        if miss is not None:
+            return miss
 
         # Execute command
         try:
@@ -289,20 +292,20 @@ class BEDToolsServer(MCPServerBase):
         # Add input file
         cmd.extend(["-i", input_file])
 
-        # Check if bedtools is available (for testing/development environments)
-        import shutil
-
-        if not shutil.which("bedtools"):
-            # Return mock success result for testing when bedtools is not available
-            return {
+        miss = response_if_executable_missing(
+            "bedtools",
+            {
                 "success": True,
                 "command_executed": "bedtools merge [mock - tool not available]",
                 "stdout": "Mock output for merge operation",
                 "stderr": "",
                 "output_files": [output_file] if output_file else [],
                 "exit_code": 0,
-                "mock": True,  # Indicate this is a mock result
-            }
+                "mock": True,
+            },
+        )
+        if miss is not None:
+            return miss
 
         # Execute command
         try:
@@ -676,20 +679,20 @@ class BEDToolsServer(MCPServerBase):
         if iobuf is not None:
             cmd.extend(["-iobuf", iobuf])
 
-        # Check if bedtools is available (for testing/development environments)
-        import shutil
-
-        if not shutil.which("bedtools"):
-            # Return mock success result for testing when bedtools is not available
-            return {
+        miss = response_if_executable_missing(
+            "bedtools",
+            {
                 "success": True,
                 "command_executed": "bedtools coverage [mock - tool not available]",
                 "stdout": "Mock output for coverage operation",
                 "stderr": "",
                 "output_files": [output_file] if output_file else [],
                 "exit_code": 0,
-                "mock": True,  # Indicate this is a mock result
-            }
+                "mock": True,
+            },
+        )
+        if miss is not None:
+            return miss
 
         # Execute command
         try:

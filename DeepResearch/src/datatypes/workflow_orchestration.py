@@ -14,6 +14,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class WorkflowType(str, Enum):
     """Types of workflows that can be orchestrated."""
@@ -107,7 +109,10 @@ class AgentConfig(BaseModel):
 
     agent_id: str = Field(..., description="Unique agent identifier")
     role: AgentRole = Field(..., description="Agent role")
-    model_name: str = Field("anthropic:claude-sonnet-4-0", description="Model to use")
+    model_name: Any = Field(
+        default=DEFAULT_PYDANTIC_AI_MODEL,
+        description="Pydantic AI model name string or in-process Model (e.g. TestModel)",
+    )
     system_prompt: str | None = Field(None, description="Custom system prompt")
     tools: list[str] = Field(default_factory=list, description="Available tools")
     max_iterations: int = Field(10, description="Maximum iterations")
@@ -194,7 +199,9 @@ class JudgeConfig(BaseModel):
 
     judge_id: str = Field(..., description="Judge identifier")
     name: str = Field(..., description="Judge name")
-    model_name: str = Field("anthropic:claude-sonnet-4-0", description="Model to use")
+    model_name: str = Field(
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use"
+    )
     evaluation_criteria: list[str] = Field(..., description="Evaluation criteria")
     scoring_scale: str = Field("1-10", description="Scoring scale")
     enabled: bool = Field(True, description="Whether judge is enabled")
@@ -256,6 +263,62 @@ class WorkflowResult(BaseModel):
     )
 
     model_config = ConfigDict(json_schema_extra={})
+
+
+class WorkflowRunContext(BaseModel):
+    """Runtime context passed to workflow adapters."""
+
+    user_input: str = Field("", description="Original user input for the run")
+    root_config: dict[str, Any] = Field(
+        default_factory=dict, description="Root application config"
+    )
+    parent_execution_id: str | None = Field(
+        None, description="Parent execution ID, if this workflow was spawned"
+    )
+    dependency_outputs: dict[str, dict[str, Any]] = Field(
+        default_factory=dict, description="Outputs from completed dependencies"
+    )
+    execution_mode: str = Field(
+        "production", description="Runtime mode: production, test, or demo"
+    )
+
+
+class WorkflowAdapterResult(BaseModel):
+    """Normalized result returned by workflow adapters."""
+
+    success: bool = Field(True, description="Whether adapter execution succeeded")
+    output_data: dict[str, Any] = Field(
+        default_factory=dict, description="Normalized adapter output"
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Adapter metadata"
+    )
+    retryable: bool = Field(False, description="Whether this failure may be retried")
+    degraded: bool = Field(False, description="Whether adapter ran in degraded mode")
+    error_message: str | None = Field(
+        None, description="Structured error when success is False"
+    )
+
+
+class WorkflowPlan(BaseModel):
+    """Deterministic executable workflow composition."""
+
+    plan_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), description="Unique plan ID"
+    )
+    user_input: str = Field("", description="Original user input")
+    workflow_names: list[str] = Field(
+        default_factory=list, description="Workflow names or workflow type values"
+    )
+    workflow_dependencies: dict[str, list[str]] = Field(
+        default_factory=dict, description="Workflow dependencies by workflow name"
+    )
+    execution_strategy: str = Field(
+        "parallel", description="Execution strategy for ready workflows"
+    )
+    expected_outputs: dict[str, str] = Field(
+        default_factory=dict, description="Expected output format by workflow name"
+    )
 
 
 class HypothesisDataset(BaseModel):
@@ -423,6 +486,9 @@ class MultiAgentCoordinationResult(BaseModel):
         default_factory=dict, description="Individual agent results"
     )
     consensus_score: float = Field(0.0, description="Consensus score")
+    error_message: str | None = Field(
+        None, description="Structured error when success is False"
+    )
 
 
 class JudgeEvaluationRequest(BaseModel):
@@ -448,6 +514,9 @@ class JudgeEvaluationResult(BaseModel):
     feedback: str = Field(..., description="Detailed feedback")
     recommendations: list[str] = Field(
         default_factory=list, description="Improvement recommendations"
+    )
+    error_message: str | None = Field(
+        None, description="Structured error when evaluation fails"
     )
 
     model_config = ConfigDict(json_schema_extra={})
@@ -531,7 +600,7 @@ class AgentOrchestratorConfig(BaseModel):
         AgentRole.ORCHESTRATOR_AGENT, description="Role of the orchestrator agent"
     )
     model_name: str = Field(
-        "anthropic:claude-sonnet-4-0", description="Model for the orchestrator"
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model for the orchestrator"
     )
     break_conditions: list[BreakCondition] = Field(
         default_factory=list, description="Break conditions"

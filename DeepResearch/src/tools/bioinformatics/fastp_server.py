@@ -8,6 +8,7 @@ all-in-one FASTQ preprocessor, using Pydantic AI patterns and testcontainers dep
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import subprocess
 from datetime import datetime
@@ -22,6 +23,9 @@ from DeepResearch.src.datatypes.mcp import (
     MCPServerStatus,
     MCPServerType,
     MCPToolSpec,
+)
+from DeepResearch.src.utils.bioinformatics_tool_helpers import (
+    response_if_executable_missing,
 )
 
 
@@ -87,37 +91,44 @@ class FastpServer(MCPServerBase):
         method_params.pop("operation", None)  # Remove operation from params
 
         try:
-            # Check if tool is available (for testing/development environments)
-            import shutil
-
-            tool_name_check = "fastp"
-            if not shutil.which(tool_name_check):
-                # Return mock success result for testing when tool is not available
-                if operation == "server_info":
-                    return {
-                        "success": True,
-                        "name": "fastp-server",
-                        "type": "fastp",
-                        "version": "0.23.4",
-                        "description": "Fastp FASTQ preprocessing server",
-                        "tools": ["fastp_process"],
-                        "container_id": None,
-                        "container_name": None,
-                        "status": "stopped",
-                        "pydantic_ai_enabled": False,
-                        "session_active": False,
-                        "mock": True,  # Indicate this is a mock result
-                    }
-                return {
+            if operation == "server_info":
+                mock_payload: dict[str, Any] = {
                     "success": True,
-                    "command_executed": f"{tool_name_check} {operation} [mock - tool not available]",
+                    "name": "fastp-server",
+                    "type": "fastp",
+                    "version": "0.23.4",
+                    "description": "Fastp FASTQ preprocessing server",
+                    "tools": ["fastp_process"],
+                    "container_id": None,
+                    "container_name": None,
+                    "status": "stopped",
+                    "pydantic_ai_enabled": False,
+                    "session_active": False,
+                    "mock": True,
+                }
+            else:
+                mock_payload = {
+                    "success": True,
+                    "command_executed": f"fastp {operation} [mock - tool not available]",
                     "stdout": f"Mock output for {operation} operation",
                     "stderr": "",
                     "output_files": [
                         method_params.get("output_file", f"mock_{operation}_output")
                     ],
                     "exit_code": 0,
-                    "mock": True,  # Indicate this is a mock result
+                    "mock": True,
+                }
+            miss = response_if_executable_missing("fastp", mock_payload)
+            if miss is not None:
+                return miss
+
+            # Call the appropriate method. Some server helpers may be async or
+            # return non-dict values; normalize to `dict[str, Any]`.
+            result = method(**method_params)
+            if inspect.isawaitable(result):
+                return {
+                    "success": False,
+                    "error": f"Operation {operation} produced an awaitable but run() is synchronous; use an async entrypoint.",
                 }
 
             # Call the appropriate method

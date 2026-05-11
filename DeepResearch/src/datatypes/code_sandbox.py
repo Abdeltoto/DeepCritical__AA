@@ -63,10 +63,11 @@ class CodeSandboxRunner(ToolRunner):
         """Generate code for the given problem."""
         # Load prompt from Hydra via PromptLoader; fall back to a minimal system
         try:
-            from DeepResearch.src.prompts import PromptLoader  # type: ignore
+            from omegaconf import DictConfig
 
-            cfg: dict[str, Any] = {}
-            loader = PromptLoader(cfg)  # type: ignore
+            from DeepResearch.src.prompts import PromptLoader
+
+            loader = PromptLoader(DictConfig({}))  # type: ignore[arg-type]
             system = loader.get("code_sandbox")
         except Exception:
             system = (

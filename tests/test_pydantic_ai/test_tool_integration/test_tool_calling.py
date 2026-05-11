@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class TestPydanticAIToolCalling:
     """Validate live tool invocations via ``TestModel``."""

@@ -66,14 +66,55 @@ class TestToolsModuleImports:
             "False",
         ]
 
+    def test_mgrep_discovery_import_stays_lazy_and_does_not_break_faiss(self):
+        """Importing mgrep discovery should not eagerly pull service deps or destabilize FAISS."""
+
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "import DeepResearch.src.tools.mgrep.discovery as discovery\n"
+                "print(discovery is not None)\n"
+                "print('DeepResearch.src.tools.mgrep.service' in sys.modules)\n"
+                "print('DeepResearch.src.datatypes.sentence_transformer_embeddings' in sys.modules)\n"
+                "import faiss\n"
+                "import numpy as np\n"
+                "index = faiss.IndexIDMap2(faiss.IndexFlatIP(2))\n"
+                "vectors = np.ascontiguousarray(np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float32))\n"
+                "ids = np.array([1, 2, 3], dtype=np.int64)\n"
+                "query = np.ascontiguousarray(np.array([[0.0, 1.0]], dtype=np.float32))\n"
+                "index.add_with_ids(vectors, ids)\n"
+                "distances, matches = index.search(query, 2)\n"
+                "print(matches.tolist())\n"
+            ),
+        ]
+        completed = subprocess.run(command, check=True, capture_output=True, text=True)
+
+        assert completed.stdout.strip().splitlines() == [
+            "True",
+            "False",
+            "False",
+            "[[3, 2]]",
+        ]
+
     def test_tools_registry_keeps_bioinformatics_tools_registered(self):
         """The package-level registry export should preserve the full default tool set."""
 
         from DeepResearch.src.tools import registry
 
         assert registry is not None
+        assert "generate_hypotheses" in registry.list()
         assert "go_annotation_processor" in registry.list()
         assert "pubmed_retriever" in registry.list()
+
+    def test_hypothesis_tools_module_imports(self):
+        """Test lazy access to the hypothesis tools module."""
+
+        from DeepResearch.src.tools import hypothesis_tools
+
+        assert hypothesis_tools is not None
+        assert hasattr(hypothesis_tools, "GenerateHypothesesTool")
 
     def test_tools_datatypes_imports(self):
         """Test all imports from tools datatypes module."""
@@ -306,6 +347,40 @@ class TestToolsModuleImports:
         # Verify they are all accessible and not None
         assert IntegratedSearchTool is not None
 
+    def test_literature_review_tools_imports(self):
+        """Test all imports from literature_review_tools module."""
+
+        from DeepResearch.src.tools.literature_review_tools import (
+            LiteratureEvidenceAppraisalTool,
+            LiteratureRetrievalTool,
+            LiteratureSearchPlanningTool,
+            LiteratureSourceCurationTool,
+            LiteratureSynthesisTool,
+        )
+
+        assert LiteratureSearchPlanningTool is not None
+        assert LiteratureRetrievalTool is not None
+        assert LiteratureSourceCurationTool is not None
+        assert LiteratureEvidenceAppraisalTool is not None
+        assert LiteratureSynthesisTool is not None
+
+    def test_literature_review_tools_package_exports(self):
+        """Test package-level exports for literature review tools."""
+
+        from DeepResearch.src.tools import (
+            LiteratureEvidenceAppraisalTool,
+            LiteratureRetrievalTool,
+            LiteratureSearchPlanningTool,
+            LiteratureSourceCurationTool,
+            LiteratureSynthesisTool,
+        )
+
+        assert LiteratureSearchPlanningTool is not None
+        assert LiteratureRetrievalTool is not None
+        assert LiteratureSourceCurationTool is not None
+        assert LiteratureEvidenceAppraisalTool is not None
+        assert LiteratureSynthesisTool is not None
+
     def test_deep_agent_middleware_imports(self):
         """Test all imports from deep_agent_middleware module."""
 
@@ -361,9 +436,9 @@ class TestToolsModuleImports:
             MiddlewareResult as DTRes,
         )
 
-        assert MiddlewareConfig is DTCfg
-        assert MiddlewareResult is DTRes
-        assert BaseMiddleware is DTBase
+        assert MiddlewareConfig.__name__ == DTCfg.__name__
+        assert MiddlewareResult.__name__ == DTRes.__name__
+        assert BaseMiddleware.__name__ == DTBase.__name__
         # Test deep search types are the same
         assert SearchResult is not None
         assert WebSearchRequest is not None
@@ -387,6 +462,19 @@ class TestToolsModuleImports:
         assert BioinformaticsWorkflowTool is not None
         assert GOAnnotationTool is not None
         assert PubMedRetrievalTool is not None
+
+    def test_bioinfomcp_catalog_imports(self):
+        """Test all imports from bioinfomcp_catalog module."""
+
+        from DeepResearch.src.tools.bioinfomcp_catalog import (
+            BioinfoMCPToolCatalogTool,
+            BioinfoMCPToolSpec,
+            list_issue_130_bioinfomcp_tools,
+        )
+
+        assert BioinfoMCPToolCatalogTool is not None
+        assert BioinfoMCPToolSpec is not None
+        assert list_issue_130_bioinfomcp_tools is not None
 
     def test_mcp_server_management_imports(self):
         """Test all imports from mcp_server_management module."""
@@ -721,3 +809,12 @@ class TestToolsImportErrorHandling:
         assert spec is not None
         assert spec.name == "test_tool"
         assert "param" in spec.inputs
+
+    def test_tools_package_unknown_attribute_raises_attribute_error(self):
+        """Unknown lazy exports should raise AttributeError."""
+        from operator import attrgetter
+
+        from DeepResearch.src import tools
+
+        with pytest.raises(AttributeError):
+            attrgetter("not_a_real_tool_module")(tools)

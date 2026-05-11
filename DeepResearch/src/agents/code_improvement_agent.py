@@ -8,14 +8,17 @@ providing intelligent code fixes and optimizations.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic_ai import Agent
 
 from DeepResearch.src.datatypes.agents import AgentResult, AgentType
 from DeepResearch.src.datatypes.coding_base import CodeBlock
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.prompts.code_exec import CodeExecPrompts
 from DeepResearch.src.utils.code_utils import infer_lang
+from DeepResearch.src.utils.model_registry import resolve_pydantic_ai_model
 
 
 class CodeImprovementAgent:
@@ -23,7 +26,9 @@ class CodeImprovementAgent:
 
     def __init__(
         self,
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: Any | None = None,
+        model_role: str = "code_generation",
+        config: Mapping[str, Any] | None = None,
         max_improvement_attempts: int = 3,
         timeout: float = 60.0,
     ):
@@ -34,7 +39,9 @@ class CodeImprovementAgent:
             max_improvement_attempts: Maximum number of improvement attempts
             timeout: Timeout for improvement operations
         """
-        self.model_name = model_name
+        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_role = model_role
+        self.config = dict(config or {})
         self.max_improvement_attempts = max_improvement_attempts
         self.timeout = timeout
 

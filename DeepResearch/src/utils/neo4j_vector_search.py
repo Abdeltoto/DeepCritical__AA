@@ -8,13 +8,10 @@ including similarity search, hybrid search, and filtered search capabilities.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from neo4j import GraphDatabase
-
-if TYPE_CHECKING:
-    # Use Any to avoid LiteralString import issues
-    LiteralString = Any
+from typing_extensions import LiteralString
 
 from ..datatypes.neo4j_types import Neo4jConnectionConfig, Neo4jVectorStoreConfig
 from ..datatypes.rag import Embeddings as EmbeddingsInterface
@@ -388,10 +385,10 @@ class Neo4jVectorSearch:
                     if test_results:
                         validation["search_works"] = True
                 except Exception as e:
-                    validation["errors"].append(f"Search test failed: {e}")  # type: ignore
+                    validation["errors"].append(f"Search test failed: {e}")
 
         except Exception as e:
-            validation["errors"].append(f"Validation failed: {e}")  # type: ignore
+            validation["errors"].append(f"Validation failed: {e}")
 
         # Print validation results
         print("Validation Results:")
@@ -402,7 +399,7 @@ class Neo4jVectorSearch:
 
         if validation["errors"]:
             print("Errors:")
-            for error in validation["errors"]:  # type: ignore
+            for error in validation["errors"]:
                 print(f"  - {error}")
 
         return validation

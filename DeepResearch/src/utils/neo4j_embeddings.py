@@ -9,13 +9,10 @@ embedding providers.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from neo4j import GraphDatabase
-
-if TYPE_CHECKING:
-    # Use Any to avoid LiteralString import issues
-    LiteralString = Any
+from typing_extensions import LiteralString
 
 from ..datatypes.neo4j_types import Neo4jConnectionConfig, Neo4jVectorStoreConfig
 from ..datatypes.rag import Embeddings as EmbeddingsInterface

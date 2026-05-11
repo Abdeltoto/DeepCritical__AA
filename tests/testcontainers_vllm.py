@@ -9,13 +9,19 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Any, TypedDict
 
 try:
     from testcontainers.vllm import VLLMContainer  # type: ignore
 except ImportError:
-    VLLMContainer = None  # type: ignore
+    VLLMContainer = None
 from omegaconf import DictConfig
+
+from DeepResearch.src.utils.network_binding import (
+    DOCKER_CONTAINER_BIND_HOST,
+    LOCAL_BIND_HOST,
+)
 
 
 class ReasoningData(TypedDict):
@@ -62,8 +68,6 @@ class VLLMPromptTester:
         """
         # Use provided config or create default
         if config is None:
-            from pathlib import Path
-
             from hydra import compose, initialize_config_dir
 
             config_dir = Path("configs")
@@ -164,6 +168,11 @@ class VLLMPromptTester:
             },
             "model": {
                 "name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                "server": {
+                    "host": LOCAL_BIND_HOST,
+                    "container_bind_host": DOCKER_CONTAINER_BIND_HOST,
+                    "port": 8000,
+                },
                 "generation": {
                     "max_tokens": 56,
                     "temperature": 0.7,
@@ -197,6 +206,23 @@ class VLLMPromptTester:
         container_config = model_config.get("container", {})
         server_config = model_config.get("server", {})
         generation_config = model_config.get("generation", {})
+        container_bind_host = server_config.get(
+            "container_bind_host", DOCKER_CONTAINER_BIND_HOST
+        )
+        container_environment = dict(container_config.get("environment", {}))
+        container_environment.update(
+            {
+                "VLLM_MODEL": self.model_name,
+                "VLLM_HOST": container_bind_host,
+                "VLLM_PORT": str(server_config.get("port", 8000)),
+                "VLLM_MAX_TOKENS": str(
+                    generation_config.get("max_tokens", self.max_tokens)
+                ),
+                "VLLM_TEMPERATURE": str(
+                    generation_config.get("temperature", self.temperature)
+                ),
+            }
+        )
 
         # Create VLLM container with configuration
         if VLLMContainer is None:
@@ -209,19 +235,7 @@ class VLLMPromptTester:
             model=self.model_name,
             host_port=server_config.get("port", 8000),
             container_port=server_config.get("port", 8000),
-            environment={
-                "VLLM_MODEL": self.model_name,
-                "VLLM_HOST": server_config.get("host", "0.0.0.0"),
-                "VLLM_PORT": str(server_config.get("port", 8000)),
-                "VLLM_MAX_TOKENS": str(
-                    generation_config.get("max_tokens", self.max_tokens)
-                ),
-                "VLLM_TEMPERATURE": str(
-                    generation_config.get("temperature", self.temperature)
-                ),
-                # Additional environment variables from config
-                **container_config.get("environment", {}),
-            },
+            environment=container_environment,
         )
 
         # Set resource limits if configured

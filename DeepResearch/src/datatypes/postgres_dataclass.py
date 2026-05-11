@@ -665,7 +665,8 @@ class PostgRESTClient:
         assert self.config.auth is not None
 
         # Add auth header
-        auth_header = self.config.auth.get_auth_header()
+        auth = self.config.auth
+        auth_header = auth.get_auth_header() if auth else None
         if auth_header:
             headers[auth_header[0]] = auth_header[1]
 

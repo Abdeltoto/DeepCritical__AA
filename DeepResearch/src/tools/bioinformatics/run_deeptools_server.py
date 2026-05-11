@@ -9,10 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Add the parent directory to the path so we can import the server
-sys.path.insert(0, str(Path(__file__).parent))
-
-from deeptools_server import DeeptoolsServer  # type: ignore[import]
+from DeepResearch.src.tools.bioinformatics.deeptools_server import DeeptoolsServer
 
 
 def main():
@@ -26,7 +23,7 @@ def main():
     parser.add_argument(
         "--port", type=int, default=8000, help="Port for HTTP server mode"
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Host for HTTP server mode")
+    parser.add_argument("--host", default="127.0.0.1", help="Host for HTTP server mode")
     parser.add_argument(
         "--no-fastmcp", action="store_true", help="Disable FastMCP integration"
     )
@@ -57,9 +54,9 @@ def main():
         server.run(
             {
                 "operation": "compute_gc_bias",
-                "bamfile": "/tmp/test.bam",
+                "bamfile": "test.bam",
                 "effective_genome_size": 3000000000,
-                "genome": "/tmp/test.2bit",
+                "genome": "test.2bit",
                 "fragment_length": 200,
             }
         )

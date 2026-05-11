@@ -13,7 +13,7 @@ import io
 import zipfile
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 import requests
@@ -23,23 +23,24 @@ from limits.strategies import MovingWindowRateLimiter
 from pydantic import BaseModel, Field
 from requests.exceptions import RequestException
 
-from DeepResearch.src.agents.bioinformatics_agents import (
-    DataFusionResult,
-    ReasoningResult,
-)
 from DeepResearch.src.datatypes.bioinformatics import (
     DataFusionRequest,
+    DataFusionResult,
     DrugTarget,
     FusedDataset,
     GEOSeries,
     GOAnnotation,
     ProteinStructure,
     PubMedPaper,
+    ReasoningResult,
     ReasoningTask,
 )
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.statemachines.bioinformatics_workflow import (
     run_bioinformatics_workflow,
 )
+
+from ..utils.model_registry import resolve_model_name
 
 # Note: defer decorator is not available in current pydantic-ai version
 from .base import ExecutionResult, ToolRunner, ToolSpec, registry
@@ -55,7 +56,11 @@ class BioinformaticsToolDeps(BaseModel):
 
     config: dict[str, Any] = Field(default_factory=dict)
     model_name: str = Field(
-        "anthropic:claude-sonnet-4-0", description="Model to use for AI agents"
+        DEFAULT_PYDANTIC_AI_MODEL, description="Model to use for AI agents"
+    )
+    model_role: str = Field(
+        "bioinformatics_reasoning",
+        description="Model-registry role used when model_name is not explicit",
     )
     quality_threshold: float = Field(
         0.8, ge=0.0, le=1.0, description="Quality threshold for data fusion"
@@ -67,13 +72,21 @@ class BioinformaticsToolDeps(BaseModel):
         bioinformatics_config = config.get("bioinformatics", {})
         model_config = bioinformatics_config.get("model", {})
         quality_config = bioinformatics_config.get("quality", {})
-
-        return cls(
-            config=config,
-            model_name=model_config.get("default", "anthropic:claude-sonnet-4-0"),
-            quality_threshold=quality_config.get("default_threshold", 0.8),
-            **kwargs,
+        model_role = model_config.get("role", "bioinformatics_reasoning")
+        configured_model = (
+            resolve_model_name(config, model_role)
+            if model_config.get("role")
+            else model_config.get("default") or resolve_model_name(config, model_role)
         )
+
+        values = {
+            "config": config,
+            "model_name": configured_model,
+            "model_role": model_role,
+            "quality_threshold": quality_config.get("default_threshold", 0.8),
+        }
+        values.update(kwargs)
+        return cls(**values)
 
 
 # Tool definitions for bioinformatics data processing
@@ -163,45 +176,101 @@ def _extract_text_from_bioc(bioc_data: dict[str, Any]) -> str:
     return "\n".join(full_text)
 
 
+def _is_abstract_passage(infons: dict[str, Any] | None) -> bool:
+    if not infons:
+        return False
+    st = (infons.get("section_type") or "").upper()
+    ty = (infons.get("type") or "").lower()
+    return st == "ABSTRACT" or ty == "abstract"
+
+
+def _extract_abstract_from_bioc(bioc_data: dict[str, Any] | None) -> str:
+    """Prefer BioC abstract passages; empty if none."""
+    if not bioc_data or "documents" not in bioc_data:
+        return ""
+    parts: list[str] = []
+    for doc in bioc_data["documents"]:
+        for passage in doc.get("passages", []):
+            if _is_abstract_passage(passage.get("infons")):
+                t = (passage.get("text") or "").strip()
+                if t:
+                    parts.append(t)
+    return "\n".join(parts).strip()
+
+
+def _doi_from_esummary_result(result: dict[str, Any]) -> str | None:
+    for aid in result.get("articleids", []) or []:
+        if (
+            isinstance(aid, dict)
+            and (aid.get("idtype") or "").lower() == "doi"
+            and aid.get("value")
+        ):
+            return str(aid["value"]).strip() or None
+    return None
+
+
+@dataclass
+class PubMedRetrieverOutcome:
+    """Result of a PubMed esearch + per-PMID fetch. ``error`` is set on transport/API failure of esearch."""
+
+    papers: list[PubMedPaper]
+    error: str | None = None
+
+
 def _build_paper(pmid: int) -> PubMedPaper | None:
     """
-    Build the paper from a series of API calls
+    Build the paper from a series of API calls (esummary + optional BioC full text).
+    Abstract text comes from BioC abstract passages when present; full concatenated BioC text is stored separately.
     """
     metadata = _get_metadata(pmid)
     if not isinstance(metadata, dict):
         return None
 
-    # Assuming the structure of the metadata response
     result = metadata.get("result", {}).get(str(pmid), {})
 
     bioc_data = _get_fulltext(pmid)
-    full_text = _extract_text_from_bioc(bioc_data) if bioc_data else ""
+    abstract_from_bioc = _extract_abstract_from_bioc(bioc_data) if bioc_data else ""
+    full_concat = _extract_text_from_bioc(bioc_data) if bioc_data else ""
+
+    abstract_text = abstract_from_bioc
+    if not abstract_text and full_concat:
+        abstract_text = full_concat[:4000]
+
+    full_text_body = full_concat if full_concat else None
+    if (
+        abstract_from_bioc
+        and full_concat
+        and len(full_concat) > len(abstract_from_bioc)
+    ):
+        full_text_body = full_concat
 
     pubdate_str = result.get("pubdate", "")
     try:
-        # Attempt to parse the year, and create a datetime object
         year = int(pubdate_str.split()[0])
-        publication_date = datetime(year, 1, 1, tzinfo=timezone.utc)
+        publication_date = datetime(year, 1, 1, tzinfo=UTC)
     except (ValueError, IndexError):
         publication_date = None
+
+    doi = _doi_from_esummary_result(result)
 
     return PubMedPaper(
         pmid=str(pmid),
         title=result.get("title", ""),
-        abstract=full_text,  # Or parse abstract specifically if available
+        abstract=abstract_text,
         journal=result.get("fulljournalname", ""),
         publication_date=publication_date,
+        doi=doi,
         authors=[author["name"] for author in result.get("authors", [])],
         is_open_access="pmcid" in result,
         pmc_id=result.get("pmcid"),
+        full_text=full_text_body,
     )
 
 
-# @defer - not available in current pydantic-ai version
 def pubmed_paper_retriever(
     query: str, max_results: int = 100, year_min: int | None = None
-) -> list[PubMedPaper]:
-    """Retrieve PubMed papers based on query."""
+) -> PubMedRetrieverOutcome:
+    """Retrieve PubMed papers via esearch; ``error`` is set when esearch HTTP/request fails (not when zero hits)."""
     PUBMED_SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     params = {
         "db": "pubmed",
@@ -217,17 +286,19 @@ def pubmed_paper_retriever(
         response = requests.get(PUBMED_SEARCH_URL, params=params)
         response.raise_for_status()
         data = response.json()
-    except RequestException:
-        return []
+    except (RequestException, OSError) as exc:
+        return PubMedRetrieverOutcome(
+            papers=[], error=f"PubMed esearch failed: {exc!s}"
+        )
 
-    papers = []
+    papers: list[PubMedPaper] = []
     if data and "esearchresult" in data and "idlist" in data["esearchresult"]:
         pmid_list = data["esearchresult"]["idlist"]
         for pmid in pmid_list:
             paper = _build_paper(int(pmid))
             if paper:
                 papers.append(paper)
-    return papers
+    return PubMedRetrieverOutcome(papers=papers, error=None)
 
 
 def geo_data_retriever(
@@ -597,16 +668,21 @@ class PubMedRetrievalTool(ToolRunner):
                     error="No query provided for PubMed retrieval",
                 )
 
-            # Retrieve papers using deferred tool
-            papers = pubmed_paper_retriever(query, max_results, year_min)
+            outcome = pubmed_paper_retriever(query, max_results, year_min)
+            if outcome.error:
+                return ExecutionResult(
+                    success=False,
+                    data={},
+                    error=outcome.error,
+                )
 
-            # Count open access papers
+            papers = outcome.papers
             open_access_count = sum(1 for paper in papers if paper.is_open_access)
 
             return ExecutionResult(
                 success=True,
                 data={
-                    "papers": [paper.model_dump() for paper in papers],
+                    "papers": [paper.model_dump(mode="json") for paper in papers],
                     "total_found": len(papers),
                     "open_access_count": open_access_count,
                 },

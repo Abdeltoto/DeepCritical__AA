@@ -19,6 +19,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 
 class MCPServerType(str, Enum):
     """Types of MCP servers."""
@@ -36,6 +38,7 @@ class MCPServerType(str, Enum):
     MACS3 = "macs3"
     HOMER = "homer"
     CUSTOM = "custom"
+    MGREP = "mgrep"
     BIOINFOMCP_CONVERTED = "bioinfomcp_converted"
 
 
@@ -579,7 +582,7 @@ class MCPAgentIntegration(BaseModel):
     """Configuration for Pydantic AI agents integrated with MCP servers."""
 
     agent_model: str = Field(
-        "anthropic:claude-sonnet-4-0", description="Model to use for the agent"
+        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use for the agent"
     )
     system_prompt: str = Field(..., description="System prompt for the agent")
     mcp_servers: list[MCPClientConfig] = Field(
@@ -594,7 +597,7 @@ class MCPAgentIntegration(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "agent_model": "anthropic:claude-sonnet-4-0",
+                "agent_model": DEFAULT_PYDANTIC_AI_MODEL,
                 "system_prompt": "You are a bioinformatics analysis assistant with access to various tools.",
                 "mcp_servers": [],
                 "execution_timeout": 300,

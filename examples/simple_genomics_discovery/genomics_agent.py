@@ -16,6 +16,8 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 
+from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
+
 # Import existing MCP servers
 from DeepResearch.src.tools.bioinformatics.fastqc_server import FastQCServer
 from DeepResearch.src.tools.bioinformatics.haplotypecaller_server import (
@@ -53,7 +55,7 @@ class GenomicsAnalysisResult(BaseModel):
 _model = (
     TestModel()
     if (not os.getenv("ANTHROPIC_API_KEY") and TestModel is not None)
-    else "anthropic:claude-sonnet-4-0"
+    else DEFAULT_PYDANTIC_AI_MODEL
 )
 
 genomics_agent = Agent[GenomicsAgentDeps, GenomicsAnalysisResult](

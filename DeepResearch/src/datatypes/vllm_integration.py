@@ -9,10 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import aiohttp
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from DeepResearch.src.utils.network_binding import (
+    LOCAL_BIND_HOST,
+    client_host_for_bind_host,
+    validate_bind_host,
+)
 
 from .rag import (
     EmbeddingModelType,
@@ -27,12 +33,23 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 
+def _http_base_from_embeddings_config(config: EmbeddingsConfig) -> str:
+    """Normalize base URL: accept full URL or host:port without double ``http://``."""
+    bu = config.base_url
+    if bu is None:
+        return "http://localhost:8000"
+    s = str(bu).rstrip("/")
+    if s.startswith("http://") or s.startswith("https://"):
+        return s
+    return f"http://{s}"
+
+
 class VLLMEmbeddings(Embeddings):
     """VLLM-based embedding provider."""
 
     def __init__(self, config: EmbeddingsConfig):
         super().__init__(config)
-        self.base_url = f"http://{config.base_url or 'localhost:8000'}"
+        self.base_url = _http_base_from_embeddings_config(config)
         self.session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self):
@@ -179,68 +196,82 @@ class VLLMLLMProvider(LLMProvider):
     async def generate_stream(
         self, prompt: str, context: str | None = None, **kwargs: Any
     ) -> AsyncGenerator[str, None]:
-        """Generate streaming text using the LLM."""
-        full_prompt = prompt
-        if context:
-            full_prompt = f"Context: {context}\n\n{prompt}"
+        """
+        Generate streaming text using the LLM.
 
-        payload = {
-            "model": self.config.model_name,
-            "messages": [{"role": "user", "content": full_prompt}],
-            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
-            "temperature": kwargs.get("temperature", self.config.temperature),
-            "top_p": kwargs.get("top_p", self.config.top_p),
-            "frequency_penalty": kwargs.get(
-                "frequency_penalty", self.config.frequency_penalty
-            ),
-            "presence_penalty": kwargs.get(
-                "presence_penalty", self.config.presence_penalty
-            ),
-            "stop": kwargs.get("stop", self.config.stop),
-            "stream": True,
-        }
+        This must be a coroutine (not an async generator) to match the base
+        `LLMProvider.generate_stream` signature, so we return an async generator
+        object from an inner generator.
+        """
 
-        if not self.session:
-            self.session = aiohttp.ClientSession()
+        async def _stream() -> AsyncGenerator[str, None]:
+            full_prompt = prompt
+            if context:
+                full_prompt = f"Context: {context}\n\n{prompt}"
 
-        url = f"{self.base_url}/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": (
-                f"Bearer {self.config.api_key}" if self.config.api_key else ""
-            ),
-        }
+            payload = {
+                "model": self.config.model_name,
+                "messages": [{"role": "user", "content": full_prompt}],
+                "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+                "temperature": kwargs.get("temperature", self.config.temperature),
+                "top_p": kwargs.get("top_p", self.config.top_p),
+                "frequency_penalty": kwargs.get(
+                    "frequency_penalty", self.config.frequency_penalty
+                ),
+                "presence_penalty": kwargs.get(
+                    "presence_penalty", self.config.presence_penalty
+                ),
+                "stop": kwargs.get("stop", self.config.stop),
+                "stream": True,
+            }
 
-        try:
-            async with self.session.post(
-                url, json=payload, headers=headers
-            ) as response:
-                response.raise_for_status()
-                async for line in response.content:
-                    line = line.decode("utf-8").strip()
-                    if line.startswith("data: "):
-                        data = line[6:]  # Remove 'data: ' prefix
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            if "choices" in chunk and len(chunk["choices"]) > 0:
-                                delta = chunk["choices"][0].get("delta", {})
-                                if "content" in delta:
-                                    yield delta["content"]
-                        except json.JSONDecodeError:
-                            continue
-        except Exception as e:
-            msg = f"Failed to generate streaming text: {e}"
-            raise RuntimeError(msg)
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
+            url = f"{self.base_url}/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": (
+                    f"Bearer {self.config.api_key}" if self.config.api_key else ""
+                ),
+            }
+
+            try:
+                async with self.session.post(
+                    url, json=payload, headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.content:
+                        line = line.decode("utf-8").strip()
+                        if line.startswith("data: "):
+                            data = line[6:]  # Remove 'data: ' prefix
+                            if data == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data)
+                                if "choices" in chunk and len(chunk["choices"]) > 0:
+                                    delta = chunk["choices"][0].get("delta", {})
+                                    if "content" in delta:
+                                        yield delta["content"]
+                            except json.JSONDecodeError:
+                                continue
+            except Exception as e:
+                msg = f"Failed to generate streaming text: {e}"
+                raise RuntimeError(msg)
+
+        return _stream()
 
 
 class VLLMServerConfig(BaseModel):
     """Configuration for VLLM server deployment."""
 
     model_name: str = Field(..., description="Model name or path")
-    host: str = Field("0.0.0.0", description="Server host")
+    host: str = Field(LOCAL_BIND_HOST, description="Server host")
     port: int = Field(8000, description="Server port")
+    allow_external_bind: bool = Field(
+        False,
+        description="Allow binding to wildcard or externally reachable interfaces.",
+    )
     gpu_memory_utilization: float = Field(0.9, description="GPU memory utilization")
     max_model_len: int = Field(4096, description="Maximum model length")
     dtype: str = Field("auto", description="Data type for model")
@@ -269,7 +300,7 @@ class VLLMServerConfig(BaseModel):
         json_schema_extra={
             "example": {
                 "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-                "host": "0.0.0.0",
+                "host": "127.0.0.1",
                 "port": 8000,
                 "gpu_memory_utilization": 0.9,
                 "max_model_len": 4096,
@@ -277,13 +308,26 @@ class VLLMServerConfig(BaseModel):
         }
     )
 
+    @model_validator(mode="after")
+    def validate_network_binding(self) -> Self:
+        """Validate the configured server bind host."""
+        self.host = validate_bind_host(
+            self.host,
+            allow_external_bind=self.allow_external_bind,
+        )
+        return self
+
 
 class VLLMEmbeddingServerConfig(BaseModel):
     """Configuration for VLLM embedding server deployment."""
 
     model_name: str = Field(..., description="Embedding model name or path")
-    host: str = Field("0.0.0.0", description="Server host")
+    host: str = Field(LOCAL_BIND_HOST, description="Server host")
     port: int = Field(8001, description="Server port")
+    allow_external_bind: bool = Field(
+        False,
+        description="Allow binding to wildcard or externally reachable interfaces.",
+    )
     gpu_memory_utilization: float = Field(0.9, description="GPU memory utilization")
     max_model_len: int = Field(512, description="Maximum model length for embeddings")
     dtype: str = Field("auto", description="Data type for model")
@@ -301,13 +345,22 @@ class VLLMEmbeddingServerConfig(BaseModel):
         json_schema_extra={
             "example": {
                 "model_name": "sentence-transformers/all-MiniLM-L6-v2",
-                "host": "0.0.0.0",
+                "host": "127.0.0.1",
                 "port": 8001,
                 "gpu_memory_utilization": 0.9,
                 "max_model_len": 512,
             }
         }
     )
+
+    @model_validator(mode="after")
+    def validate_network_binding(self) -> Self:
+        """Validate the configured embedding server bind host."""
+        self.host = validate_bind_host(
+            self.host,
+            allow_external_bind=self.allow_external_bind,
+        )
+        return self
 
 
 class VLLMDeployment(BaseModel):
@@ -343,8 +396,9 @@ class VLLMDeployment(BaseModel):
         """Start the LLM server."""
         # This would typically use subprocess or docker to start VLLM server
         # For now, we'll assume the server is already running
+        health_host = client_host_for_bind_host(self.llm_config.host)
         return await self._check_server_health(
-            f"http://{self.llm_config.host}:{self.llm_config.port}/health"
+            f"http://{health_host}:{self.llm_config.port}/health"
         )
 
     async def start_embedding_server(self) -> bool:
@@ -352,15 +406,17 @@ class VLLMDeployment(BaseModel):
         if not self.embedding_config:
             return True
 
-        return await self._check_server_health(
-            f"http://{self.embedding_config.host}:{self.embedding_config.port}/health"
-        )
+        health_host = client_host_for_bind_host(self.embedding_config.host)
+        url = f"http://{health_host}:{self.embedding_config.port}/health"
+        return await self._check_server_health(url)
 
     async def _check_server_health(self, url: str) -> bool:
         """Check if a server is healthy."""
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=5) as response:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
                     return response.status == 200
         except Exception:
             return False
@@ -376,12 +432,13 @@ class VLLMDeployment(BaseModel):
             retries = 0
             while (not llm_ready or not embedding_ready) and retries < self.max_retries:
                 await asyncio.sleep(self.health_check_interval)
+                llm_health_host = client_host_for_bind_host(self.llm_config.host)
                 llm_ready = await self._check_server_health(
-                    f"http://{self.llm_config.host}:{self.llm_config.port}/health"
+                    f"http://{llm_health_host}:{self.llm_config.port}/health"
                 )
                 embedding_ready = (
                     await self._check_server_health(
-                        f"http://{self.embedding_config.host}:{self.embedding_config.port}/health"
+                        f"http://{client_host_for_bind_host(self.embedding_config.host)}:{self.embedding_config.port}/health"
                     )
                     if self.embedding_config
                     else True

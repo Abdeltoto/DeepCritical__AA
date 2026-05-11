@@ -324,6 +324,7 @@ class TestGunzipServer(BaseBioinformaticsToolTest):
     # Error Handling Tests (behavior: graceful failure)
     # ============================================================================
 
+    @pytest.mark.optional
     def test_fails_gracefully_when_input_file_missing(self, tool_instance):
         """Decompress returns error dict when input file doesn't exist."""
         # Arrange

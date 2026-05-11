@@ -8,8 +8,10 @@ agent interaction design patterns with minimal external dependencies.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
+from omegaconf import OmegaConf
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents.workflow_pattern_agents import (
@@ -25,6 +27,7 @@ from .agents.workflow_pattern_agents import (
     create_sequential_agent,
 )
 from .datatypes.agents import AgentDependencies, AgentType
+from .datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 
 # Import all the core components
 from .datatypes.workflow_patterns import (
@@ -54,7 +57,9 @@ from .utils.workflow_patterns import (
 class WorkflowPatternConfig(BaseModel):
     """Configuration for workflow pattern execution."""
 
-    pattern: InteractionPattern = Field(..., description="Interaction pattern to use")
+    pattern: InteractionPattern = Field(
+        InteractionPattern.COLLABORATIVE, description="Interaction pattern to use"
+    )
     max_rounds: int = Field(10, description="Maximum number of interaction rounds")
     consensus_threshold: float = Field(
         0.8, description="Consensus threshold for collaborative patterns"
@@ -88,7 +93,7 @@ class AgentExecutorRegistry:
         """Get an agent executor."""
         return self._executors.get(agent_id)
 
-    def list(self) -> list[str]:
+    def list_agent_ids(self) -> list[str]:
         """List all registered agent IDs."""
         return list(self._executors.keys())
 
@@ -143,43 +148,55 @@ class WorkflowPatternFactory:
 
     @staticmethod
     def create_collaborative_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: Any | None = None,
         dependencies: AgentDependencies | None = None,
+        model_role: str = "workflow_pattern",
+        config: Mapping[str, Any] | None = None,
     ) -> CollaborativePatternAgent:
         """Create a collaborative pattern agent."""
-        return create_collaborative_agent(model_name, dependencies)
+        return create_collaborative_agent(model_name, dependencies, model_role, config)
 
     @staticmethod
     def create_sequential_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: Any | None = None,
         dependencies: AgentDependencies | None = None,
+        model_role: str = "workflow_pattern",
+        config: Mapping[str, Any] | None = None,
     ) -> SequentialPatternAgent:
         """Create a sequential pattern agent."""
-        return create_sequential_agent(model_name, dependencies)
+        return create_sequential_agent(model_name, dependencies, model_role, config)
 
     @staticmethod
     def create_hierarchical_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: Any | None = None,
         dependencies: AgentDependencies | None = None,
+        model_role: str = "workflow_pattern",
+        config: Mapping[str, Any] | None = None,
     ) -> HierarchicalPatternAgent:
         """Create a hierarchical pattern agent."""
-        return create_hierarchical_agent(model_name, dependencies)
+        return create_hierarchical_agent(model_name, dependencies, model_role, config)
 
     @staticmethod
     def create_pattern_orchestrator(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: Any | None = None,
         dependencies: AgentDependencies | None = None,
+        model_role: str = "workflow_pattern",
+        config: Mapping[str, Any] | None = None,
     ) -> PatternOrchestratorAgent:
         """Create a pattern orchestrator agent."""
-        return create_pattern_orchestrator(model_name, dependencies)
+        return create_pattern_orchestrator(model_name, dependencies, model_role, config)
 
     @staticmethod
     def create_adaptive_pattern_agent(
-        model_name: str = "anthropic:claude-sonnet-4-0",
+        model_name: Any | None = None,
         dependencies: AgentDependencies | None = None,
+        model_role: str = "workflow_pattern",
+        config: Mapping[str, Any] | None = None,
     ) -> AdaptivePatternAgent:
         """Create an adaptive pattern agent."""
-        return create_adaptive_pattern_agent(model_name, dependencies)
+        return create_adaptive_pattern_agent(
+            model_name, dependencies, model_role, config
+        )
 
 
 class WorkflowPatternExecutor:
@@ -198,9 +215,9 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute collaborative pattern workflow."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_collaborative_pattern_workflow(
             question=question,
@@ -218,9 +235,9 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute sequential pattern workflow."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_sequential_pattern_workflow(
             question=question,
@@ -239,9 +256,9 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute hierarchical pattern workflow."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_hierarchical_pattern_workflow(
             question=question,
@@ -261,9 +278,9 @@ class WorkflowPatternExecutor:
         agent_executors: dict[str, Any] | None = None,
     ) -> str:
         """Execute workflow with specified pattern."""
-        from omegaconf import DictConfig, OmegaConf
+        from omegaconf import DictConfig
 
-        config_dict = self.config.dict()
+        config_dict = self.config.model_dump()
         config_omega = OmegaConf.create(config_dict) if config_dict else None
         return await run_pattern_workflow(
             question=question,

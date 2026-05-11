@@ -185,7 +185,7 @@ make test-optional-cov # Run only optional tests with coverage
 # Multi-version testing
 strategy:
   matrix:
-    python-version: ['3.10', '3.11']
+    python-version: ['3.11', '3.12']
     os: [ubuntu-latest, windows-latest, macos-latest]
 
 steps:
@@ -455,7 +455,7 @@ jobs:
 # Parallel execution
 strategy:
   matrix:
-    python-version: ['3.10', '3.11']
+    python-version: ['3.11', '3.12']
   fail-fast: false
 ```
 
@@ -591,7 +591,7 @@ jobs:
   test:
     strategy:
       matrix:
-        python-version: ['3.10', '3.11']
+        python-version: ['3.11', '3.12']
         test-category: ['unit', 'integration', 'performance']
 
     steps:

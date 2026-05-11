@@ -5,8 +5,9 @@ notes
 .claude/
 test_artifacts/
 bandit-report.json
-codecov.yml
 .ruff_cache
+logs
+*.log
 
 # Python
 __pycache__/
@@ -93,3 +94,8 @@ Thumbs.db
 
 # MkDocs site
 site/
+
+# Local hypothesis CLI / TUI artifacts
+tui/node_modules/
+tui/.env
+hypothesis_runs/

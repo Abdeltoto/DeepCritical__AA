@@ -124,6 +124,8 @@ class JupyterCodeExecutor(CodeExecutor):
             try:
                 # Apply pip silencing if needed
                 code = silence_pip(code_block.code, code_block.language)
+                if not isinstance(code, str):
+                    code = str(code)
 
                 # Execute code (simplified - in practice would use WebSocket connection)
                 result = self._execute_code_simple(code)
