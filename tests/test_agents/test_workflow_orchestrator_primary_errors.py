@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 from omegaconf import OmegaConf
 from pydantic_ai.exceptions import AgentRunError
+from pydantic_ai.models.test import TestModel
 
 from DeepResearch.src.agents.workflow_orchestrator import PrimaryWorkflowOrchestrator
-from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.workflow_orchestration import (
     JudgeConfig,
     WorkflowConfig,
@@ -29,7 +29,7 @@ def _minimal_config(**kwargs) -> WorkflowOrchestrationConfig:
         primary_workflow=WorkflowConfig(
             workflow_type=WorkflowType.PRIMARY_REACT,
             name="main",
-            parameters={"model_name": DEFAULT_PYDANTIC_AI_MODEL},
+            parameters={"model_name": TestModel()},
         ),
         **kwargs,
     )

@@ -109,8 +109,9 @@ class AgentConfig(BaseModel):
 
     agent_id: str = Field(..., description="Unique agent identifier")
     role: AgentRole = Field(..., description="Agent role")
-    model_name: str = Field(
-        default=DEFAULT_PYDANTIC_AI_MODEL, description="Model to use"
+    model_name: Any = Field(
+        default=DEFAULT_PYDANTIC_AI_MODEL,
+        description="Pydantic AI model name string or in-process Model (e.g. TestModel)",
     )
     system_prompt: str | None = Field(None, description="Custom system prompt")
     tools: list[str] = Field(default_factory=list, description="Available tools")

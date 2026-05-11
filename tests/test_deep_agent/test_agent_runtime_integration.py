@@ -4,14 +4,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic_ai.models.test import TestModel
 
 from DeepResearch.src.agents.deep_agent_implementations import (
     AgentConfig,
     PlanningAgent,
-    create_planning_agent,
 )
 from DeepResearch.src.datatypes.deep_agent_runtime import DeepAgentDeps
 from DeepResearch.src.datatypes.deep_agent_state import DeepAgentState
+from DeepResearch.src.datatypes.deep_agent_types import AgentCapability
 from DeepResearch.src.prompts.deep_agent_graph import AgentBuilder, AgentBuilderConfig
 from DeepResearch.src.tools.deep_agent_middleware import (
     FilesystemMiddleware,
@@ -28,7 +29,18 @@ class _FakeAgent:
 def test_deep_agent_wrapper_uses_runtime_deps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
 
-    planning_agent = create_planning_agent()
+    planning_agent = PlanningAgent(
+        AgentConfig(
+            name="planning-agent",
+            model_name=TestModel(),
+            system_prompt=(
+                "You are a planning specialist focused on breaking down complex "
+                "tasks into manageable steps."
+            ),
+            tools=["write_todos"],
+            capabilities=[AgentCapability.PLANNING],
+        )
+    )
 
     assert planning_agent.agent is not None
     assert set(planning_agent.agent._function_toolset.tools) == {"write_todos"}

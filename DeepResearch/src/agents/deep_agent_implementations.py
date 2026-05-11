@@ -31,7 +31,10 @@ class AgentConfig(BaseModel):
     """Configuration for agent instances."""
 
     name: str = Field(..., description="Agent name")
-    model_name: str = Field("anthropic:claude-sonnet-4-0", description="Model name")
+    model_name: Any = Field(
+        "anthropic:claude-sonnet-4-0",
+        description="Pydantic AI model id string or Model instance (e.g. TestModel in CI)",
+    )
     system_prompt: str = Field("", description="System prompt")
     tools: list[str] = Field(default_factory=list, description="Tool names")
     capabilities: list[AgentCapability] = Field(

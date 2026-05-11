@@ -216,8 +216,12 @@ class PrimaryWorkflowOrchestrator:
             if jc.enabled:
                 self.judge_registry[jc.judge_id] = jc
         if not self.judge_registry:
-            default_model = self.config.primary_workflow.parameters.get(
+            raw_model = self.config.primary_workflow.parameters.get(
                 "model_name", DEFAULT_PYDANTIC_AI_MODEL
+            )
+            # JudgeConfig expects a provider id string; primary may use TestModel.
+            default_model = (
+                raw_model if isinstance(raw_model, str) else DEFAULT_PYDANTIC_AI_MODEL
             )
             qj = JudgeConfig(
                 judge_id="quality_judge",
