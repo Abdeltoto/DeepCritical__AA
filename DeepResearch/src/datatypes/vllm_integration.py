@@ -9,10 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import aiohttp
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from DeepResearch.src.utils.network_binding import (
+    LOCAL_BIND_HOST,
+    client_host_for_bind_host,
+    validate_bind_host,
+)
 
 from .rag import (
     EmbeddingModelType,
@@ -260,8 +266,12 @@ class VLLMServerConfig(BaseModel):
     """Configuration for VLLM server deployment."""
 
     model_name: str = Field(..., description="Model name or path")
-    host: str = Field("0.0.0.0", description="Server host")
+    host: str = Field(LOCAL_BIND_HOST, description="Server host")
     port: int = Field(8000, description="Server port")
+    allow_external_bind: bool = Field(
+        False,
+        description="Allow binding to wildcard or externally reachable interfaces.",
+    )
     gpu_memory_utilization: float = Field(0.9, description="GPU memory utilization")
     max_model_len: int = Field(4096, description="Maximum model length")
     dtype: str = Field("auto", description="Data type for model")
@@ -290,7 +300,7 @@ class VLLMServerConfig(BaseModel):
         json_schema_extra={
             "example": {
                 "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-                "host": "0.0.0.0",
+                "host": "127.0.0.1",
                 "port": 8000,
                 "gpu_memory_utilization": 0.9,
                 "max_model_len": 4096,
@@ -298,13 +308,26 @@ class VLLMServerConfig(BaseModel):
         }
     )
 
+    @model_validator(mode="after")
+    def validate_network_binding(self) -> Self:
+        """Validate the configured server bind host."""
+        self.host = validate_bind_host(
+            self.host,
+            allow_external_bind=self.allow_external_bind,
+        )
+        return self
+
 
 class VLLMEmbeddingServerConfig(BaseModel):
     """Configuration for VLLM embedding server deployment."""
 
     model_name: str = Field(..., description="Embedding model name or path")
-    host: str = Field("0.0.0.0", description="Server host")
+    host: str = Field(LOCAL_BIND_HOST, description="Server host")
     port: int = Field(8001, description="Server port")
+    allow_external_bind: bool = Field(
+        False,
+        description="Allow binding to wildcard or externally reachable interfaces.",
+    )
     gpu_memory_utilization: float = Field(0.9, description="GPU memory utilization")
     max_model_len: int = Field(512, description="Maximum model length for embeddings")
     dtype: str = Field("auto", description="Data type for model")
@@ -322,13 +345,22 @@ class VLLMEmbeddingServerConfig(BaseModel):
         json_schema_extra={
             "example": {
                 "model_name": "sentence-transformers/all-MiniLM-L6-v2",
-                "host": "0.0.0.0",
+                "host": "127.0.0.1",
                 "port": 8001,
                 "gpu_memory_utilization": 0.9,
                 "max_model_len": 512,
             }
         }
     )
+
+    @model_validator(mode="after")
+    def validate_network_binding(self) -> Self:
+        """Validate the configured embedding server bind host."""
+        self.host = validate_bind_host(
+            self.host,
+            allow_external_bind=self.allow_external_bind,
+        )
+        return self
 
 
 class VLLMDeployment(BaseModel):
@@ -364,8 +396,9 @@ class VLLMDeployment(BaseModel):
         """Start the LLM server."""
         # This would typically use subprocess or docker to start VLLM server
         # For now, we'll assume the server is already running
+        health_host = client_host_for_bind_host(self.llm_config.host)
         return await self._check_server_health(
-            f"http://{self.llm_config.host}:{self.llm_config.port}/health"
+            f"http://{health_host}:{self.llm_config.port}/health"
         )
 
     async def start_embedding_server(self) -> bool:
@@ -373,9 +406,9 @@ class VLLMDeployment(BaseModel):
         if not self.embedding_config:
             return True
 
-        return await self._check_server_health(
-            f"http://{self.embedding_config.host}:{self.embedding_config.port}/health"
-        )
+        health_host = client_host_for_bind_host(self.embedding_config.host)
+        url = f"http://{health_host}:{self.embedding_config.port}/health"
+        return await self._check_server_health(url)
 
     async def _check_server_health(self, url: str) -> bool:
         """Check if a server is healthy."""
@@ -399,12 +432,13 @@ class VLLMDeployment(BaseModel):
             retries = 0
             while (not llm_ready or not embedding_ready) and retries < self.max_retries:
                 await asyncio.sleep(self.health_check_interval)
+                llm_health_host = client_host_for_bind_host(self.llm_config.host)
                 llm_ready = await self._check_server_health(
-                    f"http://{self.llm_config.host}:{self.llm_config.port}/health"
+                    f"http://{llm_health_host}:{self.llm_config.port}/health"
                 )
                 embedding_ready = (
                     await self._check_server_health(
-                        f"http://{self.embedding_config.host}:{self.embedding_config.port}/health"
+                        f"http://{client_host_for_bind_host(self.embedding_config.host)}:{self.embedding_config.port}/health"
                     )
                     if self.embedding_config
                     else True
