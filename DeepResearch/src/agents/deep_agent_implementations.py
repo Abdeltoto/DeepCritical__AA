@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai import Agent, ModelRetry
 
 # Import existing DeepCritical types
@@ -42,14 +42,15 @@ class AgentConfig(BaseModel):
     enable_retry: bool = Field(True, description="Enable retry on failure")
     retry_attempts: int = Field(3, ge=0, description="Number of retry attempts")
 
-    @validator("name")
-    def validate_name(cls, v):
-        if not v or not v.strip():
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v: Any) -> str:
+        if not v or not str(v).strip():
             raise ValueError("Agent name cannot be empty")
-        return v.strip()
+        return str(v).strip()
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "name": "research-agent",
                 "model_name": "anthropic:claude-sonnet-4-0",
@@ -62,6 +63,7 @@ class AgentConfig(BaseModel):
                 "retry_attempts": 3,
             }
         }
+    )
 
 
 class AgentExecutionResult(BaseModel):
@@ -79,8 +81,8 @@ class AgentExecutionResult(BaseModel):
         default_factory=dict, description="Additional metadata"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "result": {"answer": "Research completed successfully"},
@@ -90,6 +92,7 @@ class AgentExecutionResult(BaseModel):
                 "metadata": {"tokens_used": 1500},
             }
         }
+    )
 
 
 class BaseDeepAgent:
@@ -214,15 +217,16 @@ class BaseDeepAgent:
         self, input_data: Union[str, dict[str, Any]], context: DeepAgentState
     ) -> Any:
         """Execute agent with retry logic."""
-        last_error = None
+        runner = self.agent
+        if runner is None:
+            raise RuntimeError("Agent not initialized")
+
+        last_error: BaseException | None = None
 
         for attempt in range(self.config.retry_attempts + 1):
             try:
                 deps = DeepAgentDeps(state=context)
-                if isinstance(input_data, str):
-                    result = await self.agent.run(input_data, deps=deps)
-                else:
-                    result = await self.agent.run(input_data, deps=deps)
+                result = await runner.run(input_data, deps=deps)
 
                 return result
 
@@ -240,6 +244,7 @@ class BaseDeepAgent:
                     continue
                 raise e
 
+        assert last_error is not None
         raise last_error
 
     def _update_metrics(
@@ -419,6 +424,18 @@ class AgentOrchestrator:
 
         return await agent.execute(input_data, context)
 
+    async def execute_task(self, task: str) -> AgentExecutionResult:
+        """Run a task with the first registered agent (default routing)."""
+        if not self.agents:
+            return AgentExecutionResult(
+                success=False,
+                error="No agents registered",
+                execution_time=0.0,
+            )
+        primary = next(iter(self.agents.values()))
+        context = DeepAgentState(session_id="orchestrator")
+        return await primary.execute(task, context)
+
     async def execute_parallel(
         self, tasks: list[dict[str, Any]], context: DeepAgentState | None = None
     ) -> list[AgentExecutionResult]:
@@ -430,7 +447,21 @@ class AgentOrchestrator:
             return await self.execute_with_agent(agent_name, input_data, context)
 
         tasks_coroutines = [execute_task(task) for task in tasks]
-        return await asyncio.gather(*tasks_coroutines, return_exceptions=True)
+        raw = await asyncio.gather(*tasks_coroutines, return_exceptions=True)
+        out: list[AgentExecutionResult] = []
+        for item in raw:
+            if isinstance(item, BaseException):
+                out.append(
+                    AgentExecutionResult(
+                        success=False,
+                        error=str(item),
+                        execution_time=0.0,
+                    )
+                )
+            else:
+                assert isinstance(item, AgentExecutionResult)
+                out.append(item)
+        return out
 
     def get_all_metrics(self) -> dict[str, AgentMetrics]:
         """Get metrics for all registered agents."""
@@ -542,7 +573,7 @@ class DeepAgentImplementation:
 
     def _initialize_orchestrator(self):
         """Initialize the agent orchestrator."""
-        self.orchestrator = create_agent_orchestrator(self.config, self.agents)
+        self.orchestrator = AgentOrchestrator(list(self.agents.values()))
 
     async def execute_task(self, task: str) -> AgentExecutionResult:
         """Execute a task using the appropriate agent."""

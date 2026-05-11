@@ -689,21 +689,20 @@ class PrimaryWorkflowOrchestrator:
 
             if isinstance(config, DictConfig):
                 data = OmegaConf.to_container(config, resolve=True)
-                return data if isinstance(data, dict) else {}
+                if not isinstance(data, dict):
+                    return {}
+                return {str(k): v for k, v in data.items()}
         except Exception:
             pass
         if isinstance(config, dict):
-            return dict(config)
+            return {str(k): v for k, v in config.items()}
         return {}
 
     def _copy_workflow_config(
         self, workflow_config: WorkflowConfig, update: dict[str, Any]
     ) -> WorkflowConfig:
-        """Copy a workflow config across Pydantic versions."""
-        model_copy = getattr(workflow_config, "model_copy", None)
-        if callable(model_copy):
-            return model_copy(update=update)
-        return workflow_config.copy(update=update)
+        """Copy a workflow config (Pydantic v2)."""
+        return workflow_config.model_copy(update=update)
 
     def _spawn_workflow(self, request: WorkflowSpawnRequest) -> WorkflowSpawnResult:
         """Spawn a new workflow execution."""

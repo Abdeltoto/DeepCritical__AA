@@ -471,9 +471,11 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
             return {}
         if isinstance(value, DictConfig):
             plain = OmegaConf.to_container(value, resolve=True)
-            return plain if isinstance(plain, dict) else {}
+            if not isinstance(plain, dict):
+                return {}
+            return {str(k): v for k, v in plain.items()}
         if isinstance(value, dict):
-            return dict(value)
+            return {str(k): v for k, v in value.items()}
         return {}
 
     def _mapping_section(self, cfg: dict[str, Any], key: str) -> dict[str, Any]:
@@ -484,8 +486,8 @@ class PrimaryREACTWorkflow(BaseNode[ResearchState, None, None]):
         if isinstance(section, dict):
             nested = section.get(key)
             if isinstance(nested, dict):
-                return nested
-            return section
+                return {str(k): v for k, v in nested.items()}
+            return {str(k): v for k, v in section.items()}
         return {}
 
     def _list_section(self, cfg: dict[str, Any], key: str) -> list[dict[str, Any]]:

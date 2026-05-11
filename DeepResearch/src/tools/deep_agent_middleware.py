@@ -271,26 +271,25 @@ class SubAgentMiddleware(BaseMiddleware):
 
     async def _create_subagent(
         self, subagent: Union[SubAgent, CustomSubAgent]
-    ) -> Agent:
+    ) -> Agent[DeepAgentDeps, str]:
         """Create an agent instance for a subagent."""
-        # This is a simplified implementation
-        # In a real implementation, you would create proper Agent instances
-        # with the appropriate model, tools, and configuration
-
+        default_model = "anthropic:claude-sonnet-4-0"
         if isinstance(subagent, CustomSubAgent):
-            # Handle custom subagents with graph-based execution
-            # For now, create a basic agent
-            pass
-
-        # Create a basic agent (this would be more sophisticated in practice)
-        # agent = Agent(
-        #     model=subagent.model or "anthropic:claude-sonnet-4-0",
-        #     system_prompt=subagent.prompt,
-        #     tools=self.default_tools
-        # )
-
-        # Return a placeholder for now
-        return None  # type: ignore
+            system_prompt = (
+                f"{subagent.description}\n(graph entry: {subagent.entry_point})"
+            )
+            return Agent(
+                model=default_model,
+                system_prompt=system_prompt,
+                deps_type=DeepAgentDeps,
+            )
+        mc = subagent.model
+        model_id = f"{mc.provider}:{mc.model_name}" if mc is not None else default_model
+        return Agent(
+            model=model_id,
+            system_prompt=subagent.prompt,
+            deps_type=DeepAgentDeps,
+        )
 
     async def execute_subagent_task(
         self, subagent_name: str, task: TaskRequest, context: DeepAgentState

@@ -98,7 +98,7 @@ def upload_dataset_to_local_repo(
         "source_file": str(payload_path),
         "uploaded_at_unix": int(time.time()),
         "dataset_id": dataset_id,
-        "payload_keys": sorted(list(payload.keys())),
+        "payload_keys": sorted(payload.keys()),
         "extra": dict(extra_metadata or {}),
     }
     (out_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -143,7 +143,7 @@ def upload_payload_object_to_local_repo(
         "source_file": source_label,
         "uploaded_at_unix": int(time.time()),
         "dataset_id": dataset_id,
-        "payload_keys": sorted(list(payload.keys())),
+        "payload_keys": sorted(payload.keys()),
         "extra": dict(extra_metadata or {}),
     }
     (out_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

@@ -93,7 +93,9 @@ class BaseAgent(ABC):
         config: dict[str, Any] | None = None,
     ):
         self.agent_type = agent_type
-        self.model_name = model_name or resolve_pydantic_ai_model(config, model_role)
+        self.model_name: str = str(
+            model_name or resolve_pydantic_ai_model(config, model_role)
+        )
         self.model_role = model_role
         self.config = config or {}
         self.dependencies = dependencies or AgentDependencies()

@@ -12,7 +12,7 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_ai import Agent
 
 # Import existing DeepCritical types
@@ -71,11 +71,12 @@ class AgentGraphNode(BaseModel):
     )
     timeout: float = Field(300.0, gt=0, description="Node timeout")
 
-    @validator("name")
-    def validate_name(cls, v):
-        if not v or not v.strip():
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v: Any) -> str:
+        if not v or not str(v).strip():
             raise ValueError("Node name cannot be empty")
-        return v.strip()
+        return str(v).strip()
 
     class Config:
         json_schema_extra = {
@@ -97,11 +98,12 @@ class AgentGraphEdge(BaseModel):
     condition: str | None = Field(None, description="Condition for edge traversal")
     weight: float = Field(1.0, description="Edge weight")
 
-    @validator("source", "target")
-    def validate_node_names(cls, v):
-        if not v or not v.strip():
+    @field_validator("source", "target", mode="before")
+    @classmethod
+    def validate_node_names(cls, v: Any) -> str:
+        if not v or not str(v).strip():
             raise ValueError("Node name cannot be empty")
-        return v.strip()
+        return str(v).strip()
 
     class Config:
         json_schema_extra = {
@@ -122,22 +124,15 @@ class AgentGraph(BaseModel):
     entry_point: str = Field(..., description="Entry point node")
     exit_points: list[str] = Field(default_factory=list, description="Exit point nodes")
 
-    @validator("entry_point")
-    def validate_entry_point(cls, v, values):
-        if "nodes" in values:
-            node_names = [node.name for node in values["nodes"]]
-            if v not in node_names:
-                raise ValueError(f"Entry point '{v}' not found in nodes")
-        return v
-
-    @validator("exit_points")
-    def validate_exit_points(cls, v, values):
-        if "nodes" in values:
-            node_names = [node.name for node in values["nodes"]]
-            for exit_point in v:
-                if exit_point not in node_names:
-                    raise ValueError(f"Exit point '{exit_point}' not found in nodes")
-        return v
+    @model_validator(mode="after")
+    def validate_entry_and_exit_points(self) -> AgentGraph:
+        node_names = [node.name for node in self.nodes]
+        if self.entry_point not in node_names:
+            raise ValueError(f"Entry point '{self.entry_point}' not found in nodes")
+        for exit_point in self.exit_points:
+            if exit_point not in node_names:
+                raise ValueError(f"Exit point '{exit_point}' not found in nodes")
+        return self
 
     def get_node(self, name: str) -> AgentGraphNode | None:
         """Get a node by name."""
