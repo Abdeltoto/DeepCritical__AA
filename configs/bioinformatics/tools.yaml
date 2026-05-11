@@ -3,6 +3,122 @@
 # Tool configuration extracted from hardcoded values
 # Configuration for bioinformatics tools and their parameters
 
+# BioContainers-backed BioinfoMCP catalog for GitHub issue #130.
+# These entries define the public issue tool names and intended server/method
+# routing without requiring the heavy server implementations to land in one PR.
+bioinformatics_mcp_servers:
+  issue_number: 130
+  enabled_tools:
+    - bamCoverage
+    - faToTwoBit
+    - gatk_ApplyBQSR
+    - gatk_BaseRecalibrator
+    - gatk_HaplotypeCaller
+    - gatk_SelectVariants
+    - gunzip
+    - mafft
+    - multiqc
+    - plotCorrelation
+    - quast
+    - trimmomatic
+  tools:
+    bamCoverage:
+      issue_number: 131
+      server: deeptools
+      tool: deeptools_bam_coverage
+      category: coverage_analysis
+      implementation_phase: deeptools_reconciliation
+      container_hint: biocontainers/deeptools
+      aliases: [bam_coverage, deeptools_bam_coverage]
+    faToTwoBit:
+      issue_number: 132
+      server: fatotwobit
+      tool: fatotwobit_convert
+      category: reference_conversion
+      implementation_phase: fatotwobit_server
+      container_hint: biocontainers/ucsc-fatotwobit
+      aliases: [fatotwobit, fa_to_twobit]
+    gatk_ApplyBQSR:
+      issue_number: 133
+      server: gatk
+      tool: gatk_apply_bqsr
+      category: variant_calling
+      implementation_phase: gatk_suite
+      container_hint: biocontainers/gatk4
+      aliases: [ApplyBQSR, gatk_applybqsr]
+    gatk_BaseRecalibrator:
+      issue_number: 134
+      server: gatk
+      tool: gatk_base_recalibrator
+      category: variant_calling
+      implementation_phase: gatk_suite
+      container_hint: biocontainers/gatk4
+      aliases: [BaseRecalibrator, gatk_baserecalibrator]
+    gatk_HaplotypeCaller:
+      issue_number: 135
+      server: haplotypecaller
+      tool: call_variants
+      category: variant_calling
+      implementation_phase: haplotypecaller_reconciliation
+      container_hint: biocontainers/gatk4
+      aliases: [HaplotypeCaller, gatk_haplotypecaller]
+    gatk_SelectVariants:
+      issue_number: 136
+      server: gatk
+      tool: gatk_select_variants
+      category: variant_filtering
+      implementation_phase: gatk_suite
+      container_hint: biocontainers/gatk4
+      aliases: [SelectVariants, gatk_selectvariants]
+    gunzip:
+      issue_number: 137
+      server: gunzip
+      tool: gunzip_decompress
+      category: compression
+      implementation_phase: gunzip_reconciliation
+      container_hint: biocontainers/gnu-coreutils
+      aliases: [gzip_decompress, decompress_gzip]
+    mafft:
+      issue_number: 138
+      server: mafft
+      tool: mafft_align
+      category: multiple_sequence_alignment
+      implementation_phase: mafft_reconciliation
+      container_hint: biocontainers/mafft
+      aliases: [mafft_align]
+    multiqc:
+      issue_number: 139
+      server: multiqc
+      tool: multiqc_run
+      category: quality_control
+      implementation_phase: multiqc_reconciliation
+      container_hint: biocontainers/multiqc
+      aliases: [multiqc_run]
+    plotCorrelation:
+      issue_number: 140
+      server: deeptools
+      tool: deeptools_plot_correlation
+      category: quality_control
+      implementation_phase: deeptools_completion
+      container_hint: biocontainers/deeptools
+      aliases: [plot_correlation, deeptools_plot_correlation]
+    quast:
+      issue_number: 141
+      server: quast
+      tool: quast_assess
+      category: assembly_quality
+      implementation_phase: quast_server
+      container_hint: biocontainers/quast
+      aliases: [quast_assess]
+    trimmomatic:
+      issue_number: 142
+      server: trimmomatic
+      tool: trimmomatic_pe
+      category: read_preprocessing
+      implementation_phase: trimmomatic_server
+      container_hint: biocontainers/trimmomatic
+      aliases: [trimmomatic_pe, trimmomatic_se]
+
 tools:
   bioinformatics_fusion:
     name: "bioinformatics_fusion"

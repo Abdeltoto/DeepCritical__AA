@@ -5,10 +5,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic_ai.models.test import TestModel
 
 from DeepResearch.src.agents.multi_agent_coordinator import MultiAgentCoordinator
 from DeepResearch.src.agents.workflow_orchestrator import PrimaryWorkflowOrchestrator
-from DeepResearch.src.datatypes.llm_models import DEFAULT_PYDANTIC_AI_MODEL
 from DeepResearch.src.datatypes.multi_agent import (
     CoordinationResult,
     CoordinationStrategy,
@@ -30,11 +30,12 @@ def _anthropic_api_key_for_agent_init(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _orch_with_system() -> PrimaryWorkflowOrchestrator:
+    test_model = TestModel()
     agents = [
         AgentConfig(
             agent_id="agent_1",
             role=AgentRole.EXECUTOR,
-            model_name=DEFAULT_PYDANTIC_AI_MODEL,
+            model_name=test_model,
         )
     ]
     system = MultiAgentSystemConfig(
@@ -49,7 +50,7 @@ def _orch_with_system() -> PrimaryWorkflowOrchestrator:
             primary_workflow=WorkflowConfig(
                 workflow_type=WorkflowType.PRIMARY_REACT,
                 name="main",
-                parameters={"model_name": DEFAULT_PYDANTIC_AI_MODEL},
+                parameters={"model_name": test_model},
             ),
             multi_agent_systems=[system],
         )

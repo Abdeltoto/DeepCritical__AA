@@ -6,6 +6,8 @@ import os
 
 from testcontainers.core.container import DockerContainer
 
+from DeepResearch.src.utils.network_binding import DOCKER_CONTAINER_BIND_HOST
+
 
 class TestContainerManager:
     """Manages test containers for isolated testing."""
@@ -86,7 +88,7 @@ def create_vllm_container(
     )
 
     container.with_env("VLLM_MODEL", model)
-    container.with_env("VLLM_HOST", "0.0.0.0")
+    container.with_env("VLLM_HOST", DOCKER_CONTAINER_BIND_HOST)
     container.with_env("VLLM_PORT", "8000")
 
     return container

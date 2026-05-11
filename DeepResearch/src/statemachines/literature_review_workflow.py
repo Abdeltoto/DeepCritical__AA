@@ -37,6 +37,23 @@ from DeepResearch.src.agents.literature_review_agents import (
     LiteratureSearchPlannerAgent,
     LiteratureSynthesisAgent,
 )
+from DeepResearch.src.agents.literature_review_pipeline_events import (
+    LiteratureReviewCompleted,
+    LiteratureReviewLLMCompleted,
+    LiteratureReviewLLMStarted,
+    LiteratureReviewPipelineEvent,
+    LiteratureReviewStage,
+    LiteratureReviewStageCompleted,
+    LiteratureReviewStarted,
+)
+from DeepResearch.src.agents.literature_review_pipeline_events import (
+    LiteratureReviewError as LiteratureReviewErrorEvent,
+)
+from DeepResearch.src.agents.literature_synthesis_llm import (
+    LiteratureLLMSynthesisParams,
+    LiteratureSynthesisLLMError,
+    synthesize_literature_with_llm,
+)
 from DeepResearch.src.datatypes.literature_review import (
     CriticalAppraisal,
     EvidenceTableRow,
@@ -49,6 +66,15 @@ from DeepResearch.src.datatypes.literature_review import (
     ScreeningDecision,
 )
 from DeepResearch.src.utils.execution_status import ExecutionStatus
+
+
+async def _literature_emit(
+    state: LiteratureReviewWorkflowState,
+    event: LiteratureReviewPipelineEvent,
+) -> None:
+    emitter = getattr(state, "emitter", None)
+    if emitter is not None:
+        await emitter.aemit(event)
 
 
 def _section_get(section: Any, key: str, default: Any = None) -> Any:
@@ -78,16 +104,18 @@ class LiteratureReviewWorkflowState(BaseModel):
 
     question: str = Field(..., description="Review question")
     mode: str = Field("review", description="Workflow mode")
-    source_mode: str = Field("fixture", description="Retrieval source mode")
+    source_mode: str = Field("pubmed", description="Retrieval source mode")
     max_sources: int = Field(12, description="Maximum candidate sources")
     include_preprints: bool = Field(True)
-    live_retrieval_enabled: bool = Field(False)
+    live_retrieval_enabled: bool = Field(True)
     min_relevance_score: float = Field(0.35)
     inclusion_criteria: list[str] = Field(default_factory=list)
     exclusion_criteria: list[str] = Field(default_factory=list)
     year_min: int | None = None
     fixture_path: str | None = None
     max_queries: int = 3
+    strict_screening: bool = False
+    exclude_irrelevant_phrases: bool = False
     config: Any | None = None
     request: LiteratureReviewRequest | None = None
     search_plan: LiteratureSearchPlan | None = None
@@ -106,6 +134,18 @@ class LiteratureReviewWorkflowState(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     status: ExecutionStatus = Field(ExecutionStatus.PENDING)
+    emitter: Any | None = Field(
+        None,
+        description="Optional JSONL emitter (LiteratureReviewJSONLEmitter)",
+    )
+    llm_synthesis_enabled: bool = False
+    llm_synthesis_model: str | None = None
+    llm_synthesis_model_ref: str | None = None
+    llm_synthesis_temperature: float = 0.35
+    llm_synthesis_base_url: str | None = None
+    llm_synthesis_api_key: str | None = None
+    llm_synthesis_max_evidence_chars: int = 12000
+    llm_synthesis_fallback_on_error: bool = True
 
     model_config = ConfigDict(arbitrary_types_allowed=True, json_schema_extra={})
 
@@ -120,6 +160,17 @@ def _mark_failure(
     state.metadata["failure_stage"] = stage
     state.metadata["error_summary"] = message
     state.status = ExecutionStatus.FAILED
+
+
+def _llm_model_preview(params: LiteratureLLMSynthesisParams) -> str:
+    """Short label for JSONL (no secrets, no long URLs)."""
+
+    if params.model_ref:
+        return f"ref:{params.model_ref}"[:64]
+    name = (params.model_name or "").strip() or "default"
+    if params.base_url and str(params.base_url).strip():
+        return f"{name[:40]}|openai_compatible"
+    return name[:64]
 
 
 def _build_failure_payload(state: LiteratureReviewWorkflowState) -> dict[str, Any]:
@@ -147,9 +198,17 @@ class ParseLiteratureReviewRequest(BaseNode[LiteratureReviewWorkflowState]):  # 
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> PlanSearchStrategy | End[dict[str, Any]]:
         state = ctx.state
+        await _literature_emit(state, LiteratureReviewStage(stage="parse"))
         question = " ".join(state.question.split()).strip()
         if not question:
             _mark_failure(state, "Question cannot be empty", stage="request_parsing")
+            await _literature_emit(
+                state,
+                LiteratureReviewErrorEvent(
+                    stage="parse",
+                    message=state.errors[-1] if state.errors else "empty question",
+                ),
+            )
             return End(_build_failure_payload(state))
 
         state.question = question
@@ -161,6 +220,13 @@ class ParseLiteratureReviewRequest(BaseNode[LiteratureReviewWorkflowState]):  # 
                 state,
                 f"source_mode '{state.source_mode}' requires live_retrieval_enabled=true",
                 stage="request_parsing",
+            )
+            await _literature_emit(
+                state,
+                LiteratureReviewErrorEvent(
+                    stage="parse",
+                    message=state.errors[-1] if state.errors else "config error",
+                ),
             )
             return End(_build_failure_payload(state))
 
@@ -184,9 +250,21 @@ class ParseLiteratureReviewRequest(BaseNode[LiteratureReviewWorkflowState]):  # 
                 f"Literature review request validation failed: {exc!s}",
                 stage="request_parsing",
             )
+            await _literature_emit(
+                state,
+                LiteratureReviewErrorEvent(
+                    stage="parse",
+                    message=state.errors[-1] if state.errors else str(exc),
+                    detail=str(exc),
+                ),
+            )
             return End(_build_failure_payload(state))
 
         state.status = ExecutionStatus.RUNNING
+        await _literature_emit(
+            state,
+            LiteratureReviewStageCompleted(stage="parse"),
+        )
         return PlanSearchStrategy()
 
 
@@ -197,6 +275,7 @@ class PlanSearchStrategy(BaseNode[LiteratureReviewWorkflowState]):  # type: igno
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> RetrieveCandidateSources | LiteratureReviewError:
         state = ctx.state
+        await _literature_emit(state, LiteratureReviewStage(stage="plan"))
         try:
             agent = LiteratureSearchPlannerAgent()
             state.search_plan = agent.plan(
@@ -215,6 +294,11 @@ class PlanSearchStrategy(BaseNode[LiteratureReviewWorkflowState]):  # type: igno
                 stage="search_planning",
             )
             return LiteratureReviewError()
+        nq = len(state.search_plan.queries) if state.search_plan else 0
+        await _literature_emit(
+            state,
+            LiteratureReviewStageCompleted(stage="plan", n_candidates=nq),
+        )
         return RetrieveCandidateSources()
 
 
@@ -225,6 +309,7 @@ class RetrieveCandidateSources(BaseNode[LiteratureReviewWorkflowState]):  # type
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> CurateSources | LiteratureReviewError:
         state = ctx.state
+        await _literature_emit(state, LiteratureReviewStage(stage="retrieve"))
         try:
             if state.search_plan is None:
                 msg = "Search plan was not initialized"
@@ -249,6 +334,13 @@ class RetrieveCandidateSources(BaseNode[LiteratureReviewWorkflowState]):  # type
                 stage="retrieval",
             )
             return LiteratureReviewError()
+        await _literature_emit(
+            state,
+            LiteratureReviewStageCompleted(
+                stage="retrieve",
+                n_candidates=len(state.candidate_sources),
+            ),
+        )
         return CurateSources()
 
 
@@ -259,6 +351,7 @@ class CurateSources(BaseNode[LiteratureReviewWorkflowState]):  # type: ignore[un
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> ExtractEvidenceAndAppraise | LiteratureReviewError:
         state = ctx.state
+        await _literature_emit(state, LiteratureReviewStage(stage="curate"))
         try:
             agent = LiteratureCurationAgent()
             curated = agent.curate(
@@ -268,6 +361,8 @@ class CurateSources(BaseNode[LiteratureReviewWorkflowState]):  # type: ignore[un
                 exclusion_criteria=state.exclusion_criteria,
                 min_relevance_score=state.min_relevance_score,
                 include_preprints=state.include_preprints,
+                strict_screening=state.strict_screening,
+                exclude_irrelevant_phrases=state.exclude_irrelevant_phrases,
             )
             state.unique_sources = [
                 LiteratureSource.model_validate(item)
@@ -295,6 +390,15 @@ class CurateSources(BaseNode[LiteratureReviewWorkflowState]):  # type: ignore[un
                 stage="source_curation",
             )
             return LiteratureReviewError()
+        await _literature_emit(
+            state,
+            LiteratureReviewStageCompleted(
+                stage="curate",
+                n_unique=len(state.unique_sources),
+                n_included=len(state.included_sources),
+                n_excluded=len(state.excluded_sources),
+            ),
+        )
         return ExtractEvidenceAndAppraise()
 
 
@@ -305,6 +409,7 @@ class ExtractEvidenceAndAppraise(BaseNode[LiteratureReviewWorkflowState]):  # ty
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> SynthesizeLiteratureReview | LiteratureReviewError:
         state = ctx.state
+        await _literature_emit(state, LiteratureReviewStage(stage="appraise"))
         try:
             agent = LiteratureCurationAgent()
             state.evidence_table, state.appraisals = agent.appraise(
@@ -317,6 +422,13 @@ class ExtractEvidenceAndAppraise(BaseNode[LiteratureReviewWorkflowState]):  # ty
                 stage="evidence_appraisal",
             )
             return LiteratureReviewError()
+        await _literature_emit(
+            state,
+            LiteratureReviewStageCompleted(
+                stage="appraise",
+                n_candidates=len(state.evidence_table),
+            ),
+        )
         return SynthesizeLiteratureReview()
 
 
@@ -327,33 +439,110 @@ class SynthesizeLiteratureReview(BaseNode[LiteratureReviewWorkflowState]):  # ty
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> End[dict[str, Any]] | LiteratureReviewError:
         state = ctx.state
+        await _literature_emit(state, LiteratureReviewStage(stage="synthesize"))
         try:
             if state.request is None or state.search_plan is None:
                 msg = "Request or search plan was not initialized"
                 raise ValueError(msg)
             agent = LiteratureSynthesisAgent()
-            state.synthesis, state.markdown_report = agent.synthesize(
-                question=state.question,
-                request=state.request.model_dump(mode="json"),
-                search_plan=state.search_plan.model_dump(mode="json"),
-                included_sources=[
-                    source.model_dump(mode="json") for source in state.included_sources
-                ],
-                excluded_sources=[
-                    source.model_dump(mode="json") for source in state.excluded_sources
-                ],
-                screening_decisions=[
-                    decision.model_dump(mode="json")
-                    for decision in state.screening_decisions
-                ],
-                evidence_table=[
-                    row.model_dump(mode="json") for row in state.evidence_table
-                ],
-                appraisals=[
-                    appraisal.model_dump(mode="json") for appraisal in state.appraisals
-                ],
-                duplicate_diagnostics=state.duplicate_diagnostics,
-            )
+
+            def run_heuristic() -> tuple[LiteratureSynthesis, str]:
+                return agent.synthesize(
+                    question=state.question,
+                    request=state.request.model_dump(mode="json"),
+                    search_plan=state.search_plan.model_dump(mode="json"),
+                    included_sources=[
+                        source.model_dump(mode="json")
+                        for source in state.included_sources
+                    ],
+                    excluded_sources=[
+                        source.model_dump(mode="json")
+                        for source in state.excluded_sources
+                    ],
+                    screening_decisions=[
+                        decision.model_dump(mode="json")
+                        for decision in state.screening_decisions
+                    ],
+                    evidence_table=[
+                        row.model_dump(mode="json") for row in state.evidence_table
+                    ],
+                    appraisals=[
+                        appraisal.model_dump(mode="json")
+                        for appraisal in state.appraisals
+                    ],
+                    duplicate_diagnostics=state.duplicate_diagnostics,
+                )
+
+            if state.llm_synthesis_enabled:
+                llm_params = LiteratureLLMSynthesisParams(
+                    model_name=(state.llm_synthesis_model or "").strip(),
+                    model_ref=state.llm_synthesis_model_ref,
+                    temperature=float(state.llm_synthesis_temperature),
+                    base_url=state.llm_synthesis_base_url,
+                    api_key=state.llm_synthesis_api_key,
+                    max_evidence_chars=int(state.llm_synthesis_max_evidence_chars),
+                )
+                await _literature_emit(
+                    state,
+                    LiteratureReviewLLMStarted(
+                        model_preview=_llm_model_preview(llm_params)
+                    ),
+                )
+                try:
+                    synthesis, md, llm_meta = await synthesize_literature_with_llm(
+                        question=state.question,
+                        request=state.request,
+                        search_plan=state.search_plan,
+                        included_sources=state.included_sources,
+                        excluded_sources=state.excluded_sources,
+                        screening_decisions=[
+                            d.model_dump(mode="json") for d in state.screening_decisions
+                        ],
+                        evidence_table=state.evidence_table,
+                        appraisals=state.appraisals,
+                        duplicate_diagnostics=state.duplicate_diagnostics,
+                        params=llm_params,
+                    )
+                    state.synthesis = synthesis
+                    state.markdown_report = md
+                    state.metadata["synthesis_mode"] = "llm"
+                    state.metadata["llm_synthesis"] = llm_meta
+                    notes = llm_meta.get("truncation_notes") or []
+                    if notes:
+                        state.metadata["llm_context_truncated"] = True
+                        state.warnings.append(
+                            "LLM synthesis context was truncated: "
+                            + "; ".join(str(n) for n in notes[:8])
+                        )
+                    await _literature_emit(
+                        state,
+                        LiteratureReviewLLMCompleted(ok=True, synthesis_mode="llm"),
+                    )
+                except (LiteratureSynthesisLLMError, Exception) as exc:
+                    await _literature_emit(
+                        state,
+                        LiteratureReviewLLMCompleted(
+                            ok=False,
+                            synthesis_mode="heuristic_fallback",
+                        ),
+                    )
+                    if not state.llm_synthesis_fallback_on_error:
+                        _mark_failure(
+                            state,
+                            f"Literature LLM synthesis failed: {exc!s}",
+                            stage="synthesis",
+                        )
+                        return LiteratureReviewError()
+                    state.warnings.append(
+                        f"LLM synthesis failed ({exc!s}); using heuristic synthesis."
+                    )
+                    state.synthesis, state.markdown_report = run_heuristic()
+                    state.metadata["synthesis_mode"] = "heuristic_fallback"
+                    state.metadata["llm_synthesis_error"] = str(exc)[:500]
+            else:
+                state.synthesis, state.markdown_report = run_heuristic()
+                state.metadata["synthesis_mode"] = "heuristic"
+
             state.report = LiteratureReviewReport(
                 request=state.request,
                 search_plan=state.search_plan,
@@ -388,6 +577,19 @@ class SynthesizeLiteratureReview(BaseNode[LiteratureReviewWorkflowState]):  # ty
                 warnings=state.warnings,
                 errors=state.errors,
             )
+            md = state.markdown_report or ""
+            preview_cap = 4000
+            truncated = len(md) > preview_cap
+            preview = md[:preview_cap] if truncated else md
+            await _literature_emit(
+                state,
+                LiteratureReviewCompleted(
+                    status=state.status.value,
+                    markdown_preview=preview,
+                    markdown_total_chars=len(md),
+                    markdown_truncated=truncated,
+                ),
+            )
             return End(result.model_dump(mode="json"))
         except Exception as exc:
             _mark_failure(
@@ -404,7 +606,14 @@ class LiteratureReviewError(BaseNode[LiteratureReviewWorkflowState]):  # type: i
     async def run(
         self, ctx: GraphRunContext[LiteratureReviewWorkflowState]
     ) -> End[dict[str, Any]]:
-        return End(_build_failure_payload(ctx.state))
+        state = ctx.state
+        stage = str(state.metadata.get("failure_stage") or "unknown")
+        msg = state.errors[-1] if state.errors else "Unknown failure"
+        await _literature_emit(
+            state,
+            LiteratureReviewErrorEvent(stage=stage, message=msg),
+        )
+        return End(_build_failure_payload(state))
 
 
 def create_literature_review_workflow() -> Graph:
@@ -427,21 +636,23 @@ async def run_literature_review_workflow(
     question: str,
     cfg: Any | None = None,
     mode: str | None = None,
+    emitter: Any | None = None,
 ) -> dict[str, Any]:
     """Run the literature review workflow with config-derived defaults."""
 
     literature_cfg = _section_get(cfg, "literature_review", {})
     search_cfg = _section_get(literature_cfg, "search", {})
+    ls_cfg = _section_get(literature_cfg, "llm_synthesis", {}) or {}
     inferred_mode = mode or _section_get(literature_cfg, "mode", "review")
 
     state = LiteratureReviewWorkflowState(
         question=question,
         mode=inferred_mode,
-        source_mode=_section_get(literature_cfg, "source_mode", "fixture"),
+        source_mode=_section_get(literature_cfg, "source_mode", "pubmed"),
         max_sources=int(_section_get(literature_cfg, "max_sources", 12) or 12),
         include_preprints=bool(_section_get(literature_cfg, "include_preprints", True)),
         live_retrieval_enabled=bool(
-            _section_get(literature_cfg, "live_retrieval_enabled", False)
+            _section_get(literature_cfg, "live_retrieval_enabled", True)
         ),
         min_relevance_score=float(
             _section_get(literature_cfg, "min_relevance_score", 0.35) or 0.35
@@ -455,7 +666,34 @@ async def run_literature_review_workflow(
         year_min=_section_get(search_cfg, "year_min", None),
         fixture_path=_section_get(literature_cfg, "fixture_path", None),
         max_queries=int(_section_get(search_cfg, "max_queries", 3) or 3),
+        strict_screening=bool(_section_get(literature_cfg, "strict_screening", False)),
+        exclude_irrelevant_phrases=bool(
+            _section_get(literature_cfg, "exclude_irrelevant_phrases", False)
+        ),
         config=cfg,
+        emitter=emitter,
+        llm_synthesis_enabled=bool(_section_get(ls_cfg, "enabled", False)),
+        llm_synthesis_model=_section_get(ls_cfg, "model", None),
+        llm_synthesis_model_ref=_section_get(ls_cfg, "model_ref", None),
+        llm_synthesis_temperature=float(
+            _section_get(ls_cfg, "temperature", 0.35) or 0.35
+        ),
+        llm_synthesis_base_url=_section_get(ls_cfg, "base_url", None),
+        llm_synthesis_api_key=_section_get(ls_cfg, "api_key", None),
+        llm_synthesis_max_evidence_chars=int(
+            _section_get(ls_cfg, "max_evidence_chars", 12000) or 12000
+        ),
+        llm_synthesis_fallback_on_error=bool(
+            _section_get(ls_cfg, "fallback_on_error", True)
+        ),
+    )
+    await _literature_emit(
+        state,
+        LiteratureReviewStarted(
+            question_preview=question[:200],
+            source_mode=state.source_mode,
+            live_retrieval_enabled=state.live_retrieval_enabled,
+        ),
     )
     workflow = create_literature_review_workflow()
     result = await cast("Any", workflow).run(

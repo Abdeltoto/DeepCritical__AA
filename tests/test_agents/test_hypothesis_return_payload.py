@@ -33,6 +33,15 @@ def test_hypothesis_payload_surfaces_failed_quality_judge() -> None:
     assert out["quality_judge_ok"] is False
     assert "timeout" in (out.get("quality_judge_error") or "")
 
+    out_fail = _hypothesis_generation_return_payload(
+        dataset=ds,
+        meta={"steps": 1},
+        judge_payload=judge,
+        run_quality_judge=True,
+        fail_on_judge_failure=True,
+    )
+    assert out_fail["success"] is False
+
 
 def test_hypothesis_payload_omits_quality_fields_when_judge_disabled() -> None:
     ds = HypothesisDataset(

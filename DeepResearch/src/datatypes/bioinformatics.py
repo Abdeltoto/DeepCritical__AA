@@ -82,7 +82,7 @@ class PubMedPaper(BaseModel):
 
     pmid: str = Field(..., description="PubMed ID")
     title: str = Field(..., description="Paper title")
-    abstract: str = Field(..., description="Paper abstract")
+    abstract: str = Field(default="", description="Paper abstract text")
     authors: list[str] = Field(default_factory=list, description="Author names")
     journal: str | None = Field(None, description="Journal name")
     publication_date: datetime | None = Field(None, description="Publication date")
@@ -92,6 +92,10 @@ class PubMedPaper(BaseModel):
     keywords: list[str] = Field(default_factory=list, description="Keywords")
     is_open_access: bool = Field(False, description="Whether paper is open access")
     full_text_url: HttpUrl | None = Field(None, description="URL to full text")
+    full_text: str | None = Field(
+        None,
+        description="Optional full article text from BioC when available (not the abstract)",
+    )
 
     model_config = ConfigDict(json_schema_extra={})
 

@@ -320,7 +320,7 @@ class FixtureLiteratureAdapter:
             return _default_fixture_records()
         path = Path(self.fixture_path)
         if not path.exists():
-            return _default_fixture_records()
+            return []
         with path.open(encoding="utf-8") as handle:
             loaded = json.load(handle)
         if isinstance(loaded, dict):
@@ -328,6 +328,21 @@ class FixtureLiteratureAdapter:
         if not isinstance(loaded, list):
             return []
         return [item for item in loaded if isinstance(item, dict)]
+
+    def explicit_fixture_invalid_reason(self) -> str | None:
+        """If ``fixture_path`` was set but the file is missing or empty, return an error message."""
+        if not self.fixture_path:
+            return None
+        path = Path(self.fixture_path)
+        if not path.exists():
+            return f"Fixture file not found: {self.fixture_path}"
+        records = self._load_records()
+        if not records:
+            return (
+                f"Fixture file '{self.fixture_path}' has no usable source records "
+                '(expect a list or {{"sources": [...]}})'
+            )
+        return None
 
 
 class OpenAlexLiteratureAdapter:
@@ -417,7 +432,8 @@ class PubMedLiteratureAdapter:
                         "doi": paper.get("doi"),
                         "pmid": paper.get("pmid"),
                         "abstract": paper.get("abstract"),
-                        "extracted_text": paper.get("full_text"),
+                        "extracted_text": paper.get("full_text")
+                        or paper.get("extracted_text"),
                         "url": paper.get("full_text_url"),
                         "source_backend": "pubmed",
                         "is_preprint": False,
@@ -542,7 +558,18 @@ class LiteratureSearchPlanningTool(ToolRunner):
 
 
 class LiteratureRetrievalTool(ToolRunner):
-    """Retrieve candidate literature sources from fixture or live adapters."""
+    """Retrieve candidate literature sources from fixture or live adapters.
+
+    Policy:
+    - ``fixture``: adapter errors become warnings; missing/empty explicit ``fixture_path`` fails.
+    - ``pubmed`` / ``openalex`` / ``web``: transport or adapter failure fails the tool (not warning-only).
+    - ``mixed``: OpenAlex failures fail the run; fixture errors remain warnings.
+    - Successful HTTP with zero hits returns ``success=True`` with empty ``candidate_sources``.
+    """
+
+    _LIVE_FAIL_ADAPTER_NAMES = frozenset(
+        {"PubMedLiteratureAdapter", "OpenAlexLiteratureAdapter", "WebLiteratureAdapter"}
+    )
 
     def __init__(self):
         super().__init__(
@@ -576,6 +603,14 @@ class LiteratureRetrievalTool(ToolRunner):
                 ),
             )
 
+        fixture_path = params.get("fixture_path")
+        if source_mode == "fixture" and fixture_path:
+            fix_err = FixtureLiteratureAdapter(
+                fixture_path
+            ).explicit_fixture_invalid_reason()
+            if fix_err:
+                return ExecutionResult(success=False, error=fix_err)
+
         search_plan = params.get("search_plan") or {}
         queries = _query_list(search_plan.get("queries"), question)
         if source_mode == "fixture":
@@ -591,11 +626,24 @@ class LiteratureRetrievalTool(ToolRunner):
         candidates: list[LiteratureSource] = []
 
         for adapter in adapters:
+            aname = adapter.__class__.__name__
             for query in queries:
                 try:
                     candidates.extend(adapter.retrieve(query, per_query_limit))
                 except Exception as exc:
-                    warnings.append(f"{adapter.__class__.__name__}: {exc!s}")
+                    msg = f"{aname}: {exc!s}"
+                    if source_mode == "fixture" or (
+                        source_mode == "mixed" and aname == "FixtureLiteratureAdapter"
+                    ):
+                        warnings.append(msg)
+                    elif aname in self._LIVE_FAIL_ADAPTER_NAMES:
+                        return ExecutionResult(
+                            success=False,
+                            error=msg,
+                            data={"warnings": warnings, "candidate_sources": []},
+                        )
+                    else:
+                        warnings.append(msg)
 
         if not candidates and warnings:
             return ExecutionResult(
@@ -679,6 +727,10 @@ class LiteratureSourceCurationTool(ToolRunner):
                 exclusion_criteria=exclusion_criteria,
                 include_preprints=bool(params.get("include_preprints", True)),
                 min_score=min_score,
+                strict_screening=bool(params.get("strict_screening", False)),
+                exclude_irrelevant_phrases=bool(
+                    params.get("exclude_irrelevant_phrases", False)
+                ),
             )
             for source in unique_sources
         ]
@@ -742,6 +794,8 @@ class LiteratureSourceCurationTool(ToolRunner):
         exclusion_criteria: list[str],
         include_preprints: bool,
         min_score: float,
+        strict_screening: bool = False,
+        exclude_irrelevant_phrases: bool = False,
     ) -> ScreeningDecision:
         source_text = " ".join(
             [
@@ -751,7 +805,6 @@ class LiteratureSourceCurationTool(ToolRunner):
                 " ".join(source.keywords),
             ]
         )
-        source_text_lower = source_text.lower()
         question_terms = _tokens(question)
         criteria_terms = _tokens(" ".join(inclusion_criteria))
         terms = question_terms | criteria_terms
@@ -764,6 +817,10 @@ class LiteratureSourceCurationTool(ToolRunner):
             relevance -= 0.1
         relevance = _clamp(relevance)
 
+        effective_min = float(min_score)
+        if strict_screening:
+            effective_min = min(1.0, effective_min + 0.1)
+
         reasons: list[str] = []
         if source.is_preprint and not include_preprints:
             return ScreeningDecision(
@@ -773,15 +830,17 @@ class LiteratureSourceCurationTool(ToolRunner):
                 reasons=["Preprints are disabled by configuration"],
             )
 
-        if (
-            "did not measure" in source_text_lower
-            or "not relevant" in source_text_lower
+        title_lower = (source.title or "").lower()
+        if exclude_irrelevant_phrases and (
+            "did not measure" in title_lower or "not relevant" in title_lower
         ):
             return ScreeningDecision(
                 source_id=source.source_id,
                 decision="exclude",
                 relevance_score=relevance,
-                reasons=["Source text explicitly signals non-relevance"],
+                reasons=[
+                    "Title matched exclusion keyword heuristic (enable only when needed)"
+                ],
             )
 
         exclusion_hits = _tokens(" ".join(exclusion_criteria)) & source_terms
@@ -796,7 +855,7 @@ class LiteratureSourceCurationTool(ToolRunner):
                 reasons=reasons,
             )
 
-        if relevance >= min_score:
+        if relevance >= effective_min:
             reasons.append("Relevant terms overlap with the review question")
             if source.abstract or source.extracted_text:
                 reasons.append("Contains usable abstract or extracted text")

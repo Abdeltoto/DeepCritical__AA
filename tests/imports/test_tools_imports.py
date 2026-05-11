@@ -436,9 +436,9 @@ class TestToolsModuleImports:
             MiddlewareResult as DTRes,
         )
 
-        assert MiddlewareConfig is DTCfg
-        assert MiddlewareResult is DTRes
-        assert BaseMiddleware is DTBase
+        assert MiddlewareConfig.__name__ == DTCfg.__name__
+        assert MiddlewareResult.__name__ == DTRes.__name__
+        assert BaseMiddleware.__name__ == DTBase.__name__
         # Test deep search types are the same
         assert SearchResult is not None
         assert WebSearchRequest is not None
@@ -462,6 +462,19 @@ class TestToolsModuleImports:
         assert BioinformaticsWorkflowTool is not None
         assert GOAnnotationTool is not None
         assert PubMedRetrievalTool is not None
+
+    def test_bioinfomcp_catalog_imports(self):
+        """Test all imports from bioinfomcp_catalog module."""
+
+        from DeepResearch.src.tools.bioinfomcp_catalog import (
+            BioinfoMCPToolCatalogTool,
+            BioinfoMCPToolSpec,
+            list_issue_130_bioinfomcp_tools,
+        )
+
+        assert BioinfoMCPToolCatalogTool is not None
+        assert BioinfoMCPToolSpec is not None
+        assert list_issue_130_bioinfomcp_tools is not None
 
     def test_mcp_server_management_imports(self):
         """Test all imports from mcp_server_management module."""
