@@ -27,7 +27,7 @@ async def test_task_tool_runs_registered_subagent() -> None:
         subagent_type="research",
         parameters={},
     )
-    resp = await task_tool(req, ctx)
+    resp = await task_tool(ctx, req)
     assert resp.success
     assert resp.result is not None
     assert resp.result.get("answer") == "yes"
@@ -44,6 +44,6 @@ async def test_task_tool_missing_subagent() -> None:
         subagent_type="missing",
         parameters={},
     )
-    resp = await task_tool(req, ctx)
+    resp = await task_tool(ctx, req)
     assert resp.success is False
     assert "No subagent" in resp.message

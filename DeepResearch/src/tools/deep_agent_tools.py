@@ -171,13 +171,15 @@ class TaskResponse(BaseModel):
 def _state_from_context(ctx: RunContext[DeepAgentDeps] | Any) -> DeepAgentState:
     """Extract DeepAgentState from current deps or legacy test contexts."""
 
+    direct_state = getattr(ctx, "state", None)
+    if isinstance(direct_state, DeepAgentState):
+        return direct_state
+
     deps = getattr(ctx, "deps", None)
     if isinstance(deps, DeepAgentDeps):
         return deps.state
-    if hasattr(deps, "state"):
+    if deps is not None and isinstance(getattr(deps, "state", None), DeepAgentState):
         return deps.state
-    if hasattr(ctx, "state"):
-        return ctx.state
     if isinstance(ctx, DeepAgentState):
         return ctx
     raise TypeError("DeepAgent tool context must provide deps.state or state")

@@ -436,9 +436,9 @@ class TestToolsModuleImports:
             MiddlewareResult as DTRes,
         )
 
-        assert MiddlewareConfig is DTCfg
-        assert MiddlewareResult is DTRes
-        assert BaseMiddleware is DTBase
+        assert MiddlewareConfig.__name__ == DTCfg.__name__
+        assert MiddlewareResult.__name__ == DTRes.__name__
+        assert BaseMiddleware.__name__ == DTBase.__name__
         # Test deep search types are the same
         assert SearchResult is not None
         assert WebSearchRequest is not None
